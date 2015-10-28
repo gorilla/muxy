@@ -152,6 +152,11 @@ func (r *Route) methodHandler(method string) func(http.ResponseWriter, *http.Req
 	if h, ok := r.methods[method]; ok {
 		return h
 	}
+	if method == "HEAD" {
+		if h, ok := r.methods["GET"]; ok {
+			return h
+		}
+	}
 	if h, ok := r.methods[""]; ok {
 		return h
 	}
