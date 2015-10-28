@@ -36,6 +36,16 @@ func parse(s string, sep rune) ([]part, error) {
 
 type partType uint8
 
+func (t partType) String() string {
+	switch t {
+	case staticPart:
+		return "static"
+	case variablePart:
+		return "variable"
+	}
+	return "wildcard"
+}
+
 const (
 	staticPart partType = iota
 	variablePart
@@ -91,7 +101,7 @@ func (p *parser) parseParts() error {
 		}
 		val := p.src[pin+1 : p.pos-1]
 		if val == "*" {
-			p.setPart(wildcardPart, val)
+			p.setPart(wildcardPart, "")
 		} else {
 			p.setPart(variablePart, val)
 		}
