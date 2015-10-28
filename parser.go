@@ -14,12 +14,18 @@ import (
 //     - if the part is enclosed by curly braces, it is a {variable};
 //     - a variable name must be a vald Go identifier or *;
 //     - * is a special wildcard variable that can only be at the end of s;
-//     - an empty part is only allowed as the first or last index of parts;
+//     - an empty part is only allowed as the last element of parts;
 func parse(s string, sep rune) ([]part, error) {
-	if i := strings.IndexRune(s, sep); i != -1 {
-		s = s[i+1:]
+	if i := strings.IndexRune(s, sep); i == 0 {
+		s = s[utf8.RuneLen(sep):]
 	}
-	p := &parser{src: s, sep: sep, dst: make([]part, countRune(s, sep)+1)}
+	n := 1
+	for _, r := range s {
+		if r == sep {
+			n++
+		}
+	}
+	p := &parser{src: s, sep: sep, dst: make([]part, n)}
 	if err := p.parseParts(); err != nil {
 		return nil, err
 	}
@@ -68,7 +74,8 @@ func (p *parser) next() rune {
 	return r
 }
 
-// parseVariable consumes a part.
+// parseParts consumes all parts recursively.
+// The leading separator was already consumed.
 func (p *parser) parseParts() error {
 	pin := p.pos
 	r := p.next()
@@ -100,7 +107,7 @@ func (p *parser) parseParts() error {
 		r = p.next()
 		switch r {
 		case p.sep:
-			p.setPart(staticPart, p.src[pin:p.pos-len(string(p.sep))])
+			p.setPart(staticPart, p.src[pin:p.pos-utf8.RuneLen(p.sep)])
 			return p.parseParts()
 		case eof:
 			p.setPart(staticPart, p.src[pin:p.pos])
@@ -145,14 +152,4 @@ func (p *parser) parseVariable() error {
 
 func (p *parser) errorf(format string, args ...interface{}) error {
 	return fmt.Errorf(fmt.Sprintf("%q: %s", p.src, format), args...)
-}
-
-func countRune(s string, r rune) int {
-	n := 0
-	for _, v := range s {
-		if v == r {
-			n++
-		}
-	}
-	return n
 }
