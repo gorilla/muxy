@@ -10,12 +10,19 @@ import (
 // New creates a new Router.
 func New() *Router {
 	// not implemented...
-	return &Router{}
+	return &Router{
+		root:            newNode(),
+		routes:          make(map[string]*Route, 0),
+		NotFoundHandler: http.NotFound,
+	}
 }
 
 // Router matches the URL of incoming requests against
 // registered routes and calls the appropriate handler.
 type Router struct {
+	root            *node
+	routes          map[string]*Route
+	NotFoundHandler func(http.ResponseWriter, *http.Request)
 	// ...
 }
 
@@ -32,19 +39,30 @@ func (r *Router) Sub(pattern string) *Subrouter {
 
 // Vars returns the matched variables for the given request.
 func (r *Router) Vars(req *http.Request) url.Values {
-	// not implemented...
+	// oooh... what a muxy trick!
+	if route := r.match(req); route != nil {
+		return route.vars(req)
+	}
 	return nil
 }
 
 // URL returns a URL segment for the given route name and variables.
 func (r *Router) URL(name string, vars url.Values) string {
-	// not implemented...
+	if route, ok := r.routes[name]; ok {
+		return route.url(vars)
+	}
 	return ""
 }
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// not implemented...
+}
+
+// match returns the matched rule for the given request.
+func (r *Router) match(req *http.Request) *Route {
+	// not implemented...
+	return nil
 }
 
 // -----------------------------------------------------------------------------
@@ -181,4 +199,16 @@ func (r *Route) allowHandler(code int) func(http.ResponseWriter, *http.Request) 
 		w.WriteHeader(code)
 		fmt.Fprintln(w, code, http.StatusText(code))
 	}
+}
+
+// url returns a URL segment for the given variables.
+func (r *Route) url(vars url.Values) string {
+	// not implemented...
+	return ""
+}
+
+// vars returns the matched variables for the given request.
+func (r *Route) vars(req *http.Request) url.Values {
+	// not implemented...
+	return nil
 }
