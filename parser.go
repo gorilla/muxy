@@ -7,14 +7,20 @@ import (
 	"unicode/utf8"
 )
 
-// parse parses a string s into parts separated by sep. for each part:
+// parse splits s into all segments separated by sep and returns a slice of
+// the part type contained between those separators. For each segment:
 //
-//     - curly braces are only allowed enclosing a whole part;
-//     - if the part is not enclosed by curly braces, it is a static part;
-//     - if the part is enclosed by curly braces, it is a {variable};
+//     - if it is not enclosed by curly braces, it is a static part;
+//     - if it is enclosed by curly braces, it is a variable part;
+//     - {*} is a special wildcard variable only allowed at the end of s;
+//     - curly braces are only allowed enclosing a whole segment;
 //     - a variable name must be a vald Go identifier or *;
-//     - * is a special wildcard variable that can only be at the end of s;
-//     - an empty part is only allowed as the last element of parts;
+//     - an empty segment is only allowed as the last part;
+//
+// Example:
+//
+//     // returns three parts: static "foo", variable "bar" and wildcard ""
+//     parts, err := parse("/foo/{bar}/{*}", '/')
 func parse(s string, sep rune) ([]part, error) {
 	if i := strings.IndexRune(s, sep); i == 0 {
 		s = s[utf8.RuneLen(sep):]
@@ -25,7 +31,7 @@ func parse(s string, sep rune) ([]part, error) {
 			n++
 		}
 	}
-	p := &parser{src: s, sep: sep, dst: make([]part, n)}
+	p := parser{src: s, sep: sep, dst: make([]part, n)}
 	if err := p.parseParts(); err != nil {
 		return nil, err
 	}
@@ -52,6 +58,7 @@ const (
 	wildcardPart
 )
 
+// part represents a segment to be matched.
 type part struct {
 	typ partType
 	val string
@@ -61,17 +68,13 @@ type part struct {
 
 const eof = -1
 
+// parser parses the declaration syntax.
 type parser struct {
 	src string
 	sep rune
 	pos int
 	idx int
 	dst []part
-}
-
-func (p *parser) setPart(typ partType, val string) {
-	p.dst[p.idx] = part{typ: typ, val: val}
-	p.idx++
 }
 
 // next returns the next rune in the input.
@@ -84,17 +87,21 @@ func (p *parser) next() rune {
 	return r
 }
 
+// setPart adds a part to the destination slice.
+func (p *parser) setPart(typ partType, val string) {
+	p.dst[p.idx] = part{typ: typ, val: val}
+	p.idx++
+}
+
 // parseParts consumes all parts recursively.
-// The leading separator was already consumed.
+//
+// The separator was already consumed when this method is called.
 func (p *parser) parseParts() error {
 	pin := p.pos
-	r := p.next()
-	switch r {
+	switch p.next() {
 	case eof:
 		p.setPart(staticPart, "")
 		return nil
-	case p.sep:
-		return p.errorf("unexpected double %q", p.sep)
 	case '{':
 		if err := p.parseVariable(); err != nil {
 			return err
@@ -112,10 +119,11 @@ func (p *parser) parseParts() error {
 			return p.parseParts()
 		}
 		return p.errorf("unexpected characters after variable declaration")
+	case p.sep:
+		return p.errorf("unexpected double %q", p.sep)
 	}
 	for {
-		r = p.next()
-		switch r {
+		switch p.next() {
 		case p.sep:
 			p.setPart(staticPart, p.src[pin:p.pos-utf8.RuneLen(p.sep)])
 			return p.parseParts()
@@ -129,7 +137,8 @@ func (p *parser) parseParts() error {
 }
 
 // parseVariable consumes the variable name including the closing curly brace.
-// The opening curly brace was already consumed.
+//
+// The opening curly brace was already consumed when this method is called.
 func (p *parser) parseVariable() error {
 	switch r := p.next(); {
 	case r == eof:
@@ -157,9 +166,9 @@ func (p *parser) parseVariable() error {
 			return p.errorf("unexpected %q in variable name", r)
 		}
 	}
-	return nil
 }
 
+// errorf returns an error prefixed by the string being parsed.
 func (p *parser) errorf(format string, args ...interface{}) error {
 	return fmt.Errorf(fmt.Sprintf("%q: %s", p.src, format), args...)
 }
