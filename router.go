@@ -87,8 +87,8 @@ func (r *Route) Name(name string) *Route {
 	return r
 }
 
-// Handler sets the given handler to be served for the optional request methods.
-func (r *Route) Handler(handler func(http.ResponseWriter, *http.Request), methods ...string) *Route {
+// Handle sets the given handler to be served for the optional request methods.
+func (r *Route) Handle(handler func(http.ResponseWriter, *http.Request), methods ...string) *Route {
 	if methods == nil {
 		r.methods[""] = handler
 	} else {
@@ -100,51 +100,51 @@ func (r *Route) Handler(handler func(http.ResponseWriter, *http.Request), method
 }
 
 // Below are convenience methods that map HTTP verbs to handlers, equivalent
-// to call r.Handler(handler, "METHOD-NAME").
+// to call r.Handle(handler, "METHOD-NAME").
 
 // Connect sets the given handler to be served for the request method CONNECT.
 func (r *Route) Connect(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "CONNECT")
+	return r.Handle(handler, "CONNECT")
 }
 
 // Delete sets the given handler to be served for the request method DELETE.
 func (r *Route) Delete(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "DELETE")
+	return r.Handle(handler, "DELETE")
 }
 
 // Get sets the given handler to be served for the request method GET.
 func (r *Route) Get(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "GET")
+	return r.Handle(handler, "GET")
 }
 
 // Head sets the given handler to be served for the request method HEAD.
 func (r *Route) Head(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "HEAD")
+	return r.Handle(handler, "HEAD")
 }
 
 // Options sets the given handler to be served for the request method OPTIONS.
 func (r *Route) Options(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "OPTIONS")
+	return r.Handle(handler, "OPTIONS")
 }
 
 // PATCH sets the given handler to be served for the request method PATCH.
 func (r *Route) Patch(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "PATCH")
+	return r.Handle(handler, "PATCH")
 }
 
 // POST sets the given handler to be served for the request method POST.
 func (r *Route) Post(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "POST")
+	return r.Handle(handler, "POST")
 }
 
 // Put sets the given handler to be served for the request method PUT.
 func (r *Route) Put(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "PUT")
+	return r.Handle(handler, "PUT")
 }
 
 // Trace sets the given handler to be served for the request method TRACE.
 func (r *Route) Trace(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handler(handler, "TRACE")
+	return r.Handle(handler, "TRACE")
 }
 
 // methodHandler returns the handler registered for the given HTTP method.

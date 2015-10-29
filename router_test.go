@@ -10,7 +10,7 @@ import (
 var (
 	getDefaultRoute = newRoute(nil, "").
 			Get(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "get") }).
-			Handler(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "default") })
+			Handle(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "default") })
 	postRoute = newRoute(nil, "").
 			Post(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "post") })
 )
