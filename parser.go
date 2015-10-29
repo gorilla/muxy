@@ -21,17 +21,17 @@ import (
 //
 //     // returns three parts: static "foo", variable "bar" and wildcard ""
 //     parts, err := parse("/foo/{bar}/{*}", '/')
-func parse(s string, sep rune) ([]part, error) {
-	if i := strings.IndexRune(s, sep); i == 0 {
-		s = s[utf8.RuneLen(sep):]
+func parse(s string, sep byte) ([]part, error) {
+	if i := strings.IndexByte(s, sep); i == 0 {
+		s = s[1:]
 	}
-	n := 1
-	for _, r := range s {
-		if r == sep {
+	n, r := 1, rune(sep)
+	for _, v := range s {
+		if v == r {
 			n++
 		}
 	}
-	p := parser{src: s, sep: sep, dst: make([]part, n)}
+	p := parser{src: s, sep: r, dst: make([]part, n)}
 	if err := p.parseParts(); err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (p *parser) parseParts() error {
 	for {
 		switch p.next() {
 		case p.sep:
-			p.setPart(staticPart, p.src[pin:p.pos-utf8.RuneLen(p.sep)])
+			p.setPart(staticPart, p.src[pin:p.pos-1])
 			return p.parseParts()
 		case eof:
 			p.setPart(staticPart, p.src[pin:p.pos])
