@@ -9,7 +9,6 @@ import (
 
 // New creates a new Router.
 func New() *Router {
-	// not implemented...
 	return &Router{
 		root:            newNode(),
 		routes:          make(map[string]*Route, 0),
@@ -28,8 +27,26 @@ type Router struct {
 
 // Route creates a new Route for the given pattern.
 func (r *Router) Route(pattern string) *Route {
-	// not implemented...
-	return newRoute(r, pattern)
+	u, err := url.Parse(pattern)
+	if err != nil {
+		panic(err)
+	}
+	// path
+	pathParts := parts{{typ: wildcardPart}}
+	if u.Path != "" {
+		pathParts, err = parse(u.Path, '/')
+		if err != nil {
+			panic(err)
+		}
+	}
+	pathNode := r.root.newEdge(pathParts)
+	// route
+	if pathNode.leaf != nil {
+		panic(fmt.Sprintf("%q already has a registered equivalent", pattern))
+	}
+	route := newRoute(r, pattern)
+	pathNode.leaf = route
+	return route
 }
 
 // Sub creates a subrouter for the given pattern prefix.
@@ -57,11 +74,15 @@ func (r *Router) URL(name string, vars url.Values) string {
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// not implemented...
+	r.NotFoundHandler(w, req)
 }
 
-// match returns the matched rule for the given request.
+// match returns the matched route for the given request.
 func (r *Router) match(req *http.Request) *Route {
-	// not implemented...
+	pathNode := r.root.edge(req.URL.Path[1:], '/')
+	if pathNode != nil && pathNode.leaf != nil {
+		return pathNode.leaf.(*Route)
+	}
 	return nil
 }
 
@@ -87,21 +108,28 @@ func (s *Subrouter) Sub(pattern string) *Subrouter {
 
 // newRoute creates a new Route.
 func newRoute(r *Router, pattern string) *Route {
-	// not implemented...
-	return &Route{router: r, methods: map[string]func(http.ResponseWriter, *http.Request){}}
+	return &Route{
+		router:  r,
+		pattern: pattern,
+		methods: map[string]func(http.ResponseWriter, *http.Request){},
+	}
 }
 
 // Route stores a URL pattern to be matched and the handler to be served
 // in case of a match, optionally mapping HTTP methods to different handlers.
 type Route struct {
 	router  *Router
+	pattern string
 	methods map[string]func(http.ResponseWriter, *http.Request)
 	// ...
 }
 
 // Name defines the route name used for URL building.
 func (r *Route) Name(name string) *Route {
-	// not implemented...
+	if _, ok := r.router.routes[name]; ok {
+		panic(fmt.Sprintf("mux: duplicated name %q", name))
+	}
+	r.router.routes[name] = r
 	return r
 }
 

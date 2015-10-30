@@ -57,12 +57,46 @@ var methodLookupTests = []struct {
 	},
 }
 
+var matchTests = []struct {
+	pattern string
+	url     string
+}{
+	{
+		pattern: "/a/b",
+		url:     "http://www.domain.com/a/b",
+	},
+	{
+		pattern: "/a/{b}",
+		url:     "http://www.domain.com/a/c",
+	},
+	{
+		pattern: "/a/{*}",
+		url:     "http://www.domain.com/a/b/c",
+	},
+}
+
 func TestMethodLookup(t *testing.T) {
 	for _, tt := range methodLookupTests {
 		w := httptest.NewRecorder()
 		tt.route.methodHandler(tt.method)(w, nil)
 		if w.Body.String() != tt.body {
 			t.Errorf("%s: got body %q, want %q", tt.method, w.Body.String(), tt.body)
+		}
+	}
+}
+
+func TestMatch(t *testing.T) {
+	r := New()
+	for _, v := range matchTests {
+		r.Route(v.pattern)
+	}
+	for _, v := range matchTests {
+		req, _ := http.NewRequest("GET", v.url, nil)
+		route := r.match(req)
+		if route == nil {
+			t.Errorf("%q: expected to match %q", v.url, v.pattern)
+		} else if route.pattern != v.pattern {
+			t.Errorf("%q: got pattern %q, want %q", v.url, route.pattern, v.pattern)
 		}
 	}
 }

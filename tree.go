@@ -1,29 +1,29 @@
 package muxy
 
 import (
-	"fmt"
 	"strings"
 )
 
 const (
-	variableKey = "{"
-	wildcardKey = "}"
+	variableKey = "{v}"
+	wildcardKey = "(*}"
 )
 
-type leaf interface {
-	setParts([]part)
-	rawParts() string
-}
-
+// newNode creates a new node.
 func newNode() *node {
 	return &node{edges: map[string]*node{}}
 }
 
+// node is a tree that stores keys to be matched and a possible value.
 type node struct {
-	leaf  leaf             // leaf node, if any
+	leaf  interface{}      // leaf node, if any
 	edges map[string]*node // edge nodes, if any
 }
 
+// edge returns the edge node corresponding to s.
+//
+// A recursive lookup is performend slicing s into all substrings
+// separated by sep.
 func (n *node) edge(s string, sep byte) *node {
 	next := ""
 	if idx := strings.IndexByte(s, sep); idx >= 0 {
@@ -49,11 +49,8 @@ func (n *node) edge(s string, sep byte) *node {
 	return nil
 }
 
-func (n *node) setLeaf(s string, sep byte, l leaf) error {
-	p, err := parse(s, sep)
-	if err != nil {
-		return err
-	}
+// newEdge returns the edge for the given parts, creating them if needed.
+func (n *node) newEdge(p parts) *node {
 	for _, v := range p {
 		key := wildcardKey
 		switch v.typ {
@@ -69,10 +66,5 @@ func (n *node) setLeaf(s string, sep byte, l leaf) error {
 		}
 		n = e
 	}
-	if n.leaf != nil {
-		return fmt.Errorf("%q already has a registered equivalent: %s", s, n.leaf.rawParts())
-	}
-	l.setParts(p)
-	n.leaf = l
-	return nil
+	return n
 }

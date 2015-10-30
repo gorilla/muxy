@@ -1,8 +1,8 @@
 package muxy
 
 import (
+	"bytes"
 	"fmt"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -21,8 +21,8 @@ import (
 //
 //     // returns three parts: static "foo", variable "bar" and wildcard ""
 //     parts, err := parse("/foo/{bar}/{*}", '/')
-func parse(s string, sep byte) ([]part, error) {
-	if i := strings.IndexByte(s, sep); i == 0 {
+func parse(s string, sep byte) (parts, error) {
+	if s != "" && s[0] == sep {
 		s = s[1:]
 	}
 	n, r := 1, rune(sep)
@@ -64,6 +64,29 @@ type part struct {
 	val string
 }
 
+type parts []part
+
+func (p parts) raw(sep byte) string {
+	b := new(bytes.Buffer)
+	if sep == '/' {
+		b.WriteByte(sep)
+	}
+	for k, v := range p {
+		switch v.typ {
+		case staticPart:
+			b.WriteString(v.val)
+		case variablePart:
+			b.WriteString("{" + v.val + "}")
+		case wildcardPart:
+			b.WriteString("{*}")
+		}
+		if k < len(p)-1 {
+			b.WriteByte(sep)
+		}
+	}
+	return b.String()
+}
+
 // -----------------------------------------------------------------------------
 
 const eof = -1
@@ -74,7 +97,7 @@ type parser struct {
 	sep rune
 	pos int
 	idx int
-	dst []part
+	dst parts
 }
 
 // next returns the next rune in the input.
@@ -170,5 +193,5 @@ func (p *parser) parseVariable() error {
 
 // errorf returns an error prefixed by the string being parsed.
 func (p *parser) errorf(format string, args ...interface{}) error {
-	return fmt.Errorf(fmt.Sprintf("%q: %s", p.src, format), args...)
+	return fmt.Errorf(fmt.Sprintf("mux: %q: %s", p.src, format), args...)
 }

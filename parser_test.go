@@ -6,56 +6,56 @@ import (
 
 type parserTest struct {
 	pattern string
-	parts   []part
+	parts   parts
 }
 
 var parserTests = []parserTest{
 	// static
-	{"/", []part{
+	{"/", parts{
 		{staticPart, ""},
 	}},
-	{"/foo", []part{
+	{"/foo", parts{
 		{staticPart, "foo"},
 	}},
-	{"/foo/", []part{
+	{"/foo/", parts{
 		{staticPart, "foo"},
 		{staticPart, ""},
 	}},
-	{"/foo/bar", []part{
+	{"/foo/bar", parts{
 		{staticPart, "foo"},
 		{staticPart, "bar"},
 	}},
-	{"/foo/bar/", []part{
+	{"/foo/bar/", parts{
 		{staticPart, "foo"},
 		{staticPart, "bar"},
 		{staticPart, ""},
 	}},
 	// variable
-	{"/{foo}", []part{
+	{"/{foo}", parts{
 		{variablePart, "foo"},
 	}},
-	{"/{foo}/", []part{
+	{"/{foo}/", parts{
 		{variablePart, "foo"},
 		{staticPart, ""},
 	}},
-	{"/{foo}/{bar}", []part{
+	{"/{foo}/{bar}", parts{
 		{variablePart, "foo"},
 		{variablePart, "bar"},
 	}},
-	{"/{foo}/{bar}/", []part{
+	{"/{foo}/{bar}/", parts{
 		{variablePart, "foo"},
 		{variablePart, "bar"},
 		{staticPart, ""},
 	}},
 	// wildcard
-	{"/{*}", []part{
+	{"/{*}", parts{
 		{wildcardPart, ""},
 	}},
-	{"/foo/{*}", []part{
+	{"/foo/{*}", parts{
 		{staticPart, "foo"},
 		{wildcardPart, ""},
 	}},
-	{"/foo/{bar}/{*}", []part{
+	{"/foo/{bar}/{*}", parts{
 		{staticPart, "foo"},
 		{variablePart, "bar"},
 		{wildcardPart, ""},
@@ -80,13 +80,17 @@ func TestParsePaths(t *testing.T) {
 			if !equalParts(v.parts, parts) {
 				t.Errorf("%q: expected %v; got %v", v.pattern, v.parts, parts)
 			}
+			raw := v.parts.raw('/')
+			if v.pattern != raw {
+				t.Errorf("%q: bad conversion to string; got %v", v.pattern, raw)
+			}
 		} else if v.parts != nil {
 			t.Errorf("%q: expected %v; failed to parse with error %q", v.pattern, v.parts, err)
 		}
 	}
 }
 
-func equalParts(p1, p2 []part) bool {
+func equalParts(p1, p2 parts) bool {
 	if len(p1) != len(p2) {
 		return false
 	}
