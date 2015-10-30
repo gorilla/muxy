@@ -60,6 +60,15 @@ var parserTests = []parserTest{
 		{variablePart, "bar"},
 		{wildcardPart, ""},
 	}},
+	{"/foo%2fbar", []part{
+		{staticPart, "foo/bar"},
+	}},
+	{"/%E4%B8%96%E7%95%8C", []part{
+		{staticPart, "世界"},
+	}},
+	{"/%25", []part{
+		{staticPart, "%"},
+	}},
 	// parsing errors
 	{"//foo", nil},     // double separator
 	{"/fo{o", nil},     // variable delimiter in static part
@@ -69,8 +78,12 @@ var parserTests = []parserTest{
 	{"/{foo", nil},     // unclosed variable
 	{"/{foo}}", nil},   // too closed variable
 	{"/{*}/", nil},     // wildcard in bad place
+	{"/foo/{*}/", nil}, // wildcard in bad place
 	{"/{*name}", nil},  // invalid variable name
 	{"/{1name}", nil},  // invalid variable name
+	{"junk", nil},      // path does not start with /
+	{"/%2x", nil},      // invalid percent encoding
+	{"/%2", nil},       // invalid percent encoding
 }
 
 func TestParsePaths(t *testing.T) {
