@@ -20,35 +20,6 @@ type node struct {
 	edges map[string]*node // edge nodes, if any
 }
 
-// edge returns the edge node corresponding to s.
-//
-// A recursive lookup is performend slicing s into all substrings
-// separated by sep.
-func (n *node) edge(s string, sep byte) *node {
-	next := ""
-	if idx := strings.IndexByte(s, sep); idx >= 0 {
-		s, next = s[:idx], s[idx+1:]
-	}
-	if e := n.edges[s]; e != nil {
-		if len(next) == 0 {
-			return e
-		} else if e = e.edge(next, sep); e != nil {
-			return e
-		}
-	}
-	if e := n.edges[variableKey]; e != nil {
-		if len(next) == 0 {
-			return e
-		} else if e = e.edge(next, sep); e != nil {
-			return e
-		}
-	}
-	if e := n.edges[wildcardKey]; e != nil {
-		return e
-	}
-	return nil
-}
-
 // newEdge returns the edge for the given parts, creating them if needed.
 func (n *node) newEdge(p parts) *node {
 	for _, v := range p {
@@ -67,4 +38,94 @@ func (n *node) newEdge(p parts) *node {
 		n = e
 	}
 	return n
+}
+
+// matchScheme returns the edge node for the given scheme, host and path.
+func (n *node) matchScheme(scheme, host, path string) *node {
+	if e, ok := n.edges[scheme]; ok {
+		if hostNode, ok := e.leaf.(*node); ok {
+			if e = hostNode.matchHost(host, path); e != nil {
+				return e
+			}
+		}
+	}
+	if e, ok := n.edges[variableKey]; ok {
+		if hostNode, ok := e.leaf.(*node); ok {
+			if e = hostNode.matchHost(host, path); e != nil {
+				return e
+			}
+		}
+	}
+	if e, ok := n.edges[wildcardKey]; ok {
+		if hostNode, ok := e.leaf.(*node); ok {
+			if e = hostNode.matchHost(host, path); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+// matchHost returns the edge node for the given host and path.
+func (n *node) matchHost(host, path string) *node {
+	next := ""
+	if idx := strings.IndexByte(host, '.'); idx >= 0 {
+		host, next = host[:idx], host[idx+1:]
+	}
+	if e, ok := n.edges[host]; ok {
+		if len(next) == 0 {
+			if pathNode, ok := e.leaf.(*node); ok {
+				if e = pathNode.matchPath(path); e != nil {
+					return e
+				}
+			}
+		} else if e = e.matchHost(next, path); e != nil {
+			return e
+		}
+	}
+	if e, ok := n.edges[variableKey]; ok {
+		if len(next) == 0 {
+			if pathNode, ok := e.leaf.(*node); ok {
+				if e = pathNode.matchPath(path); e != nil {
+					return e
+				}
+			}
+		} else if e = e.matchHost(next, path); e != nil {
+			return e
+		}
+	}
+	if e, ok := n.edges[wildcardKey]; ok {
+		if pathNode, ok := e.leaf.(*node); ok {
+			if e = pathNode.matchPath(path); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+// matchPath returns the edge node for the given path.
+func (n *node) matchPath(path string) *node {
+	next := ""
+	if idx := strings.IndexByte(path, '/'); idx >= 0 {
+		path, next = path[:idx], path[idx+1:]
+	}
+	if e, ok := n.edges[path]; ok {
+		if len(next) == 0 {
+			return e
+		} else if e = e.matchPath(next); e != nil {
+			return e
+		}
+	}
+	if e, ok := n.edges[variableKey]; ok {
+		if len(next) == 0 {
+			return e
+		} else if e = e.matchPath(next); e != nil {
+			return e
+		}
+	}
+	if e, ok := n.edges[wildcardKey]; ok {
+		return e
+	}
+	return nil
 }

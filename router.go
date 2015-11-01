@@ -27,9 +27,39 @@ type Router struct {
 
 // Route creates a new Route for the given pattern.
 func (r *Router) Route(pattern string) *Route {
+	// Note: this is a proof of concept. We must optimize this storing what
+	// kind of matches are needed (scheme, host, path), and avoid the unneeded
+	// layers. So if only paths are registered, we skip scheme and host
+	// matching and so on. In other words, the root node must be adapted
+	// if the pattern requires matches that were not required before.
+	// For now, we are assuming that all matches are required.
 	u, err := url.Parse(pattern)
 	if err != nil {
 		panic(err)
+	}
+	// scheme
+	schemeParts := parts{{typ: wildcardPart}}
+	if u.Scheme != "" {
+		schemeParts, err = parse(u.Scheme, '/')
+		if err != nil {
+			panic(err)
+		}
+	}
+	schemeNode := r.root.newEdge(schemeParts)
+	if schemeNode.leaf == nil {
+		schemeNode.leaf = newNode()
+	}
+	// host
+	hostParts := parts{{typ: wildcardPart}}
+	if u.Host != "" {
+		hostParts, err = parse(u.Host, '.')
+		if err != nil {
+			panic(err)
+		}
+	}
+	hostNode := schemeNode.leaf.(*node).newEdge(hostParts)
+	if hostNode.leaf == nil {
+		hostNode.leaf = newNode()
 	}
 	// path
 	pathParts := parts{{typ: wildcardPart}}
@@ -39,10 +69,10 @@ func (r *Router) Route(pattern string) *Route {
 			panic(err)
 		}
 	}
-	pathNode := r.root.newEdge(pathParts)
+	pathNode := hostNode.leaf.(*node).newEdge(pathParts)
 	// route
 	if pathNode.leaf != nil {
-		panic(fmt.Sprintf("%q already has a registered equivalent", pattern))
+		panic(fmt.Sprintf("mux: %q already has a registered equivalent", pattern))
 	}
 	route := newRoute(r, pattern)
 	pathNode.leaf = route
@@ -79,7 +109,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // match returns the matched route for the given request.
 func (r *Router) match(req *http.Request) *Route {
-	pathNode := r.root.edge(req.URL.Path[1:], '/')
+	pathNode := r.root.matchScheme(req.URL.Scheme, req.URL.Host, req.URL.Path[1:])
 	if pathNode != nil && pathNode.leaf != nil {
 		return pathNode.leaf.(*Route)
 	}

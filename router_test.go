@@ -61,17 +61,35 @@ var matchTests = []struct {
 	pattern string
 	url     string
 }{
+	// scheme
 	{
-		pattern: "/a/b",
-		url:     "http://www.domain.com/a/b",
+		pattern: "myscheme:",
+		url:     "myscheme://www.anything.com/anything",
 	},
+	// host
 	{
-		pattern: "/a/{b}",
-		url:     "http://www.domain.com/a/c",
+		pattern: "//mydomain.com",
+		url:     "anything://mydomain.com/anything",
 	},
+	// path
 	{
-		pattern: "/a/{*}",
-		url:     "http://www.domain.com/a/b/c",
+		pattern: "/a/{b}/{*}",
+		url:     "anything://www.anything.com/a/b/c",
+	},
+	// host + path
+	{
+		pattern: "//{sub}.domain.com/a/{b}/{*}",
+		url:     "anything://my.domain.com/a/b/c",
+	},
+	// scheme + path
+	{
+		pattern: "https:///a/{b}/{*}",
+		url:     "https://www.anything.com/a/b/c",
+	},
+	// scheme + host + path
+	{
+		pattern: "https://{sub}.domain.com/a/{b}/{*}",
+		url:     "https://my.domain.com/a/b/c",
 	},
 }
 
