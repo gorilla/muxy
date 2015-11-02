@@ -51,11 +51,12 @@ func (m *hostMatcher) match(r *Router, req *http.Request) *Route {
 // matchHost returns the route for the given request.
 func (m *hostMatcher) matchHost(r *Router, req *http.Request, host string) *Route {
 	next := ""
-	if idx := strings.IndexByte(host, '.'); idx >= 0 {
+	idx := strings.IndexByte(host, '.')
+	if idx >= 0 {
 		host, next = host[:idx], host[idx+1:]
 	}
 	if hm, ok := m.edges[host]; ok {
-		if len(next) == 0 {
+		if idx < 0 {
 			if pm := hm.leaf; pm != nil {
 				if route := pm.match(r, req); route != nil {
 					return route
@@ -66,7 +67,7 @@ func (m *hostMatcher) matchHost(r *Router, req *http.Request, host string) *Rout
 		}
 	}
 	if hm, ok := m.edges[variableKey]; ok {
-		if len(next) == 0 {
+		if idx < 0 {
 			if pm := hm.leaf; pm != nil {
 				if route := pm.match(r, req); route != nil {
 					return route
@@ -129,18 +130,19 @@ func (m *pathMatcher) match(r *Router, req *http.Request) *Route {
 // edge returns the edge node for the given path.
 func (m *pathMatcher) edge(path string) *pathMatcher {
 	next := ""
-	if idx := strings.IndexByte(path, '/'); idx >= 0 {
+	idx := strings.IndexByte(path, '/')
+	if idx >= 0 {
 		path, next = path[:idx], path[idx+1:]
 	}
 	if pm, ok := m.edges[path]; ok {
-		if len(next) == 0 {
+		if idx < 0 {
 			return pm
 		} else if pm = pm.edge(next); pm != nil {
 			return pm
 		}
 	}
 	if pm, ok := m.edges[variableKey]; ok {
-		if len(next) == 0 {
+		if idx < 0 {
 			return pm
 		} else if pm = pm.edge(next); pm != nil {
 			return pm
