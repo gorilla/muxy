@@ -10,8 +10,8 @@ import (
 // New creates a new Router.
 func New() *Router {
 	return &Router{
-		root:            newNode(),
-		routes:          make(map[string]*Route, 0),
+		matcher:         newPathMatcher(),
+		routes:          map[string]*Route{},
 		NotFoundHandler: http.NotFound,
 	}
 }
@@ -19,7 +19,7 @@ func New() *Router {
 // Router matches the URL of incoming requests against
 // registered routes and calls the appropriate handler.
 type Router struct {
-	root            *node
+	matcher         matcher
 	routes          map[string]*Route
 	NotFoundHandler func(http.ResponseWriter, *http.Request)
 	// ...
@@ -27,56 +27,12 @@ type Router struct {
 
 // Route creates a new Route for the given pattern.
 func (r *Router) Route(pattern string) *Route {
-	// Note: this is a proof of concept. We must optimize this storing what
-	// kind of matches are needed (scheme, host, path), and avoid the unneeded
-	// layers. So if only paths are registered, we skip scheme and host
-	// matching and so on. In other words, the root node must be adapted
-	// if the pattern requires matches that were not required before.
-	// For now, we are assuming that all matches are required.
-	u, err := url.Parse(pattern)
-	if err != nil {
-		panic(err)
+	m, pm := newPattern(r.matcher, pattern)
+	r.matcher = m
+	if pm.leaf == nil {
+		pm.leaf = newRoute(r, pattern)
 	}
-	// scheme
-	schemeParts := parts{{typ: wildcardPart}}
-	if u.Scheme != "" {
-		schemeParts, err = parse(u.Scheme, '/')
-		if err != nil {
-			panic(err)
-		}
-	}
-	schemeNode := r.root.newEdge(schemeParts)
-	if schemeNode.leaf == nil {
-		schemeNode.leaf = newNode()
-	}
-	// host
-	hostParts := parts{{typ: wildcardPart}}
-	if u.Host != "" {
-		hostParts, err = parse(u.Host, '.')
-		if err != nil {
-			panic(err)
-		}
-	}
-	hostNode := schemeNode.leaf.(*node).newEdge(hostParts)
-	if hostNode.leaf == nil {
-		hostNode.leaf = newNode()
-	}
-	// path
-	pathParts := parts{{typ: wildcardPart}}
-	if u.Path != "" {
-		pathParts, err = parse(u.Path, '/')
-		if err != nil {
-			panic(err)
-		}
-	}
-	pathNode := hostNode.leaf.(*node).newEdge(pathParts)
-	// route
-	if pathNode.leaf != nil {
-		panic(fmt.Sprintf("mux: %q already has a registered equivalent", pattern))
-	}
-	route := newRoute(r, pattern)
-	pathNode.leaf = route
-	return route
+	return pm.leaf
 }
 
 // Sub creates a subrouter for the given pattern prefix.
@@ -104,16 +60,16 @@ func (r *Router) URL(name string, vars url.Values) string {
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// not implemented...
+	if route := r.matcher.match(r, req); route != nil {
+		route.methodHandler(req.Method)(w, req)
+		return
+	}
 	r.NotFoundHandler(w, req)
 }
 
 // match returns the matched route for the given request.
 func (r *Router) match(req *http.Request) *Route {
-	pathNode := r.root.matchScheme(req.URL.Scheme, req.URL.Host, req.URL.Path[1:])
-	if pathNode != nil && pathNode.leaf != nil {
-		return pathNode.leaf.(*Route)
-	}
-	return nil
+	return r.matcher.match(r, req)
 }
 
 // -----------------------------------------------------------------------------
