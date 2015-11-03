@@ -32,6 +32,9 @@ func (r *Router) Route(pattern string) *Route {
 	if pm.leaf == nil {
 		pm.leaf = newRoute(r, pattern)
 	}
+	if pm.leaf.pattern != pattern {
+		panic(fmt.Sprintf("mux: pattern %q has a registered equivalent %q", pattern, pm.leaf.pattern))
+	}
 	return pm.leaf
 }
 

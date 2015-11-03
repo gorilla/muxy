@@ -132,10 +132,7 @@ func (m *pathMatcher) match(scheme, host, path string) *pathMatcher {
 			return pm
 		}
 	}
-	if pm, ok := m.edges[wildcardKey]; ok {
-		return pm
-	}
-	return nil
+	return m.edges[wildcardKey]
 }
 
 // newEdge returns the edge for the given parts, creating them if needed.
