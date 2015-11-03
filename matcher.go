@@ -1,7 +1,6 @@
 package muxy
 
 import (
-	"net/http"
 	"net/url"
 	"strings"
 )
@@ -12,22 +11,22 @@ const (
 )
 
 type matcher interface {
-	match(*Router, *http.Request) *Route
+	match(scheme, host, path string) *pathMatcher
 }
 
 // -----------------------------------------------------------------------------
 
 type schemeMatcher map[string]*hostMatcher
 
-func (m schemeMatcher) match(r *Router, req *http.Request) *Route {
-	if hm, ok := m[req.URL.Scheme]; ok {
-		if route := hm.match(r, req); route != nil {
-			return route
+func (m schemeMatcher) match(scheme, host, path string) *pathMatcher {
+	if hm, ok := m[scheme]; ok {
+		if pm := hm.match(scheme, host, path); pm != nil {
+			return pm
 		}
 	}
 	if hm, ok := m[wildcardKey]; ok {
-		if route := hm.match(r, req); route != nil {
-			return route
+		if pm := hm.match(scheme, host, path); pm != nil {
+			return pm
 		}
 	}
 	return nil
@@ -44,12 +43,7 @@ type hostMatcher struct {
 	edges map[string]*hostMatcher // edge nodes, if any
 }
 
-func (m *hostMatcher) match(r *Router, req *http.Request) *Route {
-	return m.matchHost(r, req, req.URL.Host)
-}
-
-// matchHost returns the route for the given request.
-func (m *hostMatcher) matchHost(r *Router, req *http.Request, host string) *Route {
+func (m *hostMatcher) match(scheme, host, path string) *pathMatcher {
 	next := ""
 	idx := strings.IndexByte(host, '.')
 	if idx >= 0 {
@@ -58,27 +52,27 @@ func (m *hostMatcher) matchHost(r *Router, req *http.Request, host string) *Rout
 	if hm, ok := m.edges[host]; ok {
 		if idx < 0 {
 			if pm := hm.leaf; pm != nil {
-				if route := pm.match(r, req); route != nil {
-					return route
+				if pm := pm.match(scheme, host, path); pm != nil {
+					return pm
 				}
 			}
-		} else if route := hm.matchHost(r, req, next); route != nil {
-			return route
+		} else if pm := hm.match(scheme, next, path); pm != nil {
+			return pm
 		}
 	}
 	if hm, ok := m.edges[variableKey]; ok {
 		if idx < 0 {
 			if pm := hm.leaf; pm != nil {
-				if route := pm.match(r, req); route != nil {
-					return route
+				if pm := pm.match(scheme, host, path); pm != nil {
+					return pm
 				}
 			}
-		} else if route := hm.matchHost(r, req, next); route != nil {
-			return route
+		} else if pm := hm.match(scheme, next, path); pm != nil {
+			return pm
 		}
 	}
 	if hm, ok := m.edges[wildcardKey]; ok && hm.leaf != nil {
-		return hm.leaf.match(r, req)
+		return hm.leaf.match(scheme, host, path)
 	}
 	return nil
 }
@@ -118,17 +112,7 @@ type pathMatcher struct {
 	edges map[string]*pathMatcher // edge nodes, if any
 }
 
-func (m *pathMatcher) match(r *Router, req *http.Request) *Route {
-	// TODO: following router configuration, return route that sets a
-	// redirection for strict slashes.
-	if e := m.edge(req.URL.Path[1:]); e != nil {
-		return e.leaf
-	}
-	return nil
-}
-
-// edge returns the edge node for the given path.
-func (m *pathMatcher) edge(path string) *pathMatcher {
+func (m *pathMatcher) match(scheme, host, path string) *pathMatcher {
 	next := ""
 	idx := strings.IndexByte(path, '/')
 	if idx >= 0 {
@@ -137,14 +121,14 @@ func (m *pathMatcher) edge(path string) *pathMatcher {
 	if pm, ok := m.edges[path]; ok {
 		if idx < 0 {
 			return pm
-		} else if pm = pm.edge(next); pm != nil {
+		} else if pm = pm.match(scheme, host, next); pm != nil {
 			return pm
 		}
 	}
 	if pm, ok := m.edges[variableKey]; ok {
 		if idx < 0 {
 			return pm
-		} else if pm = pm.edge(next); pm != nil {
+		} else if pm = pm.match(scheme, host, next); pm != nil {
 			return pm
 		}
 	}
@@ -192,8 +176,9 @@ func newPattern(m matcher, pattern string) (matcher, *pathMatcher) {
 	if err != nil {
 		panic(err)
 	}
-	m2 := m
+
 	// conversion needed?
+	m2 := m
 	switch m := m.(type) {
 	case *hostMatcher:
 		if u.Scheme != "" {
@@ -210,28 +195,26 @@ func newPattern(m matcher, pattern string) (matcher, *pathMatcher) {
 	var pm *pathMatcher
 	switch m2 := m2.(type) {
 	case schemeMatcher:
-		pm = matcherForScheme(u.Scheme, u.Host, u.Path, m2)
+		pm = matcherForScheme(m2, u.Scheme, u.Host, u.Path)
 	case *hostMatcher:
-		pm = matcherForHost(u.Host, u.Path, m2)
+		pm = matcherForHost(m2, u.Host, u.Path)
 	case *pathMatcher:
-		pm = matcherForPath(u.Path, m2)
+		pm = matcherForPath(m2, u.Path)
 	}
 	return m2, pm
 }
 
-func matcherForScheme(scheme, host, path string, sm schemeMatcher) *pathMatcher {
+func matcherForScheme(sm schemeMatcher, scheme, host, path string) *pathMatcher {
 	if scheme == "" {
 		scheme = wildcardKey
 	}
-	hm, ok := sm[scheme]
-	if !ok {
-		hm = newHostMatcher()
-		sm[scheme] = hm
+	if _, ok := sm[scheme]; !ok {
+		sm[scheme] = newHostMatcher()
 	}
-	return matcherForHost(host, path, hm)
+	return matcherForHost(sm[scheme], host, path)
 }
 
-func matcherForHost(host, path string, hm *hostMatcher) *pathMatcher {
+func matcherForHost(hm *hostMatcher, host, path string) *pathMatcher {
 	if host == "" {
 		hm = hm.newEdge(parts{{typ: wildcardPart}})
 	} else {
@@ -244,10 +227,10 @@ func matcherForHost(host, path string, hm *hostMatcher) *pathMatcher {
 	if hm.leaf == nil {
 		hm.leaf = newPathMatcher()
 	}
-	return matcherForPath(path, hm.leaf)
+	return matcherForPath(hm.leaf, path)
 }
 
-func matcherForPath(path string, pm *pathMatcher) *pathMatcher {
+func matcherForPath(pm *pathMatcher, path string) *pathMatcher {
 	if path == "" {
 		return pm.newEdge(parts{{typ: wildcardPart}})
 	}

@@ -60,7 +60,7 @@ func (r *Router) URL(name string, vars url.Values) string {
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// not implemented...
-	if route := r.matcher.match(r, req); route != nil {
+	if route := r.match(req); route != nil {
 		route.methodHandler(req.Method)(w, req)
 		return
 	}
@@ -69,7 +69,11 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // match returns the matched route for the given request.
 func (r *Router) match(req *http.Request) *Route {
-	return r.matcher.match(r, req)
+	u := req.URL
+	if pm := r.matcher.match(u.Scheme, u.Host, u.Path[1:]); pm != nil {
+		return pm.leaf
+	}
+	return nil
 }
 
 // -----------------------------------------------------------------------------
