@@ -1,8 +1,6 @@
 package muxy
 
-import (
-	"testing"
-)
+import "testing"
 
 type parserTest struct {
 	pattern string
@@ -60,6 +58,20 @@ var parserTests = []parserTest{
 		{variablePart, "bar"},
 		{wildcardPart, ""},
 	}},
+	// percent encodings
+	{"/foo%2Fbar", []part{
+		{staticPart, "foo/bar"},
+	}},
+	{"/%E4%B8%96%E7%95%8C", []part{
+		{staticPart, "世界"},
+	}},
+	{"/%25", []part{
+		{staticPart, "%"},
+	}},
+	{"/%25/", []part{
+		{staticPart, "%"},
+		{staticPart, ""},
+	}},
 	// parsing errors
 	{"//foo", nil},     // double separator
 	{"/fo{o", nil},     // variable delimiter in static part
@@ -71,6 +83,8 @@ var parserTests = []parserTest{
 	{"/{*}/", nil},     // wildcard in bad place
 	{"/{*name}", nil},  // invalid variable name
 	{"/{1name}", nil},  // invalid variable name
+	{"/%2x", nil},      // invalid percent encoding
+	{"/%2", nil},       // invalid percent encoding
 }
 
 func TestParsePaths(t *testing.T) {
