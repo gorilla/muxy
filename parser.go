@@ -74,7 +74,7 @@ func (p parts) raw(sep byte) string {
 	for k, v := range p {
 		switch v.typ {
 		case staticPart:
-			b.WriteString(v.val)
+			b.WriteString(encodePathSegment(v.val))
 		case variablePart:
 			b.WriteString("{" + v.val + "}")
 		case wildcardPart:
@@ -148,10 +148,18 @@ func (p *parser) parseParts() error {
 	for {
 		switch p.next() {
 		case p.sep:
-			p.setPart(staticPart, p.src[pin:p.pos-1])
+			s, err := decodePathSegment(p.src[pin : p.pos-1])
+			if err != nil {
+				return p.errorf(err.Error())
+			}
+			p.setPart(staticPart, s)
 			return p.parseParts()
 		case eof:
-			p.setPart(staticPart, p.src[pin:p.pos])
+			s, err := decodePathSegment(p.src[pin:p.pos])
+			if err != nil {
+				return p.errorf(err.Error())
+			}
+			p.setPart(staticPart, s)
 			return nil
 		case '{', '}':
 			return p.errorf("variables must be at the start of a segment")
