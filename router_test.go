@@ -76,6 +76,10 @@ var matchTests = []struct {
 		pattern: "/a/{b}/{*}",
 		url:     "anything://www.anything.com/a/b/c",
 	},
+	{
+		pattern: "/{*}",
+		url:     "anything://www.anything.com/a",
+	},
 	// host + path
 	{
 		pattern: "//{sub}.domain.com/a/{b}/{*}",

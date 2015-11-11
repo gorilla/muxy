@@ -119,20 +119,27 @@ func (m *pathMatcher) match(scheme, host, path string) *pathMatcher {
 		path, next = path[:idx], path[idx+1:]
 	}
 	if pm, ok := m.edges[path]; ok {
-		if idx < 0 {
-			return pm
-		} else if pm = pm.match(scheme, host, next); pm != nil {
+		if idx >= 0 {
+			pm = pm.match(scheme, host, next)
+		}
+		if pm != nil && pm.leaf != nil {
 			return pm
 		}
 	}
 	if pm, ok := m.edges[variableKey]; ok {
-		if idx < 0 {
-			return pm
-		} else if pm = pm.match(scheme, host, next); pm != nil {
+		if idx >= 0 {
+			pm = pm.match(scheme, host, next)
+		}
+		if pm != nil && pm.leaf != nil {
 			return pm
 		}
 	}
-	return m.edges[wildcardKey]
+	if pm, ok := m.edges[wildcardKey]; ok {
+		if pm.leaf != nil {
+			return pm
+		}
+	}
+	return nil
 }
 
 // newEdge returns the edge for the given parts, creating them if needed.
