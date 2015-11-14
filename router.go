@@ -32,8 +32,8 @@ func (r *Router) Route(pattern string) *Route {
 	if pm.leaf == nil {
 		pm.leaf = newRoute(r, pattern)
 	}
-	if pm.leaf.pattern != pattern {
-		panic(fmt.Sprintf("mux: pattern %q has a registered equivalent %q", pattern, pm.leaf.pattern))
+	if pm.leaf.Pattern != pattern {
+		panic(fmt.Sprintf("mux: pattern %q has a registered equivalent %q", pattern, pm.leaf.Pattern))
 	}
 	return pm.leaf
 }
@@ -102,18 +102,18 @@ func (s *Subrouter) Sub(pattern string) *Subrouter {
 // newRoute creates a new Route.
 func newRoute(r *Router, pattern string) *Route {
 	return &Route{
-		router:  r,
-		pattern: pattern,
-		methods: map[string]func(http.ResponseWriter, *http.Request){},
+		router:   r,
+		Pattern:  pattern,
+		Handlers: map[string]func(http.ResponseWriter, *http.Request){},
 	}
 }
 
 // Route stores a URL pattern to be matched and the handler to be served
 // in case of a match, optionally mapping HTTP methods to different handlers.
 type Route struct {
-	router  *Router
-	pattern string
-	methods map[string]func(http.ResponseWriter, *http.Request)
+	router   *Router
+	Pattern  string
+	Handlers map[string]func(http.ResponseWriter, *http.Request)
 	// ...
 }
 
@@ -129,10 +129,10 @@ func (r *Route) Name(name string) *Route {
 // Handle sets the given handler to be served for the optional request methods.
 func (r *Route) Handle(handler func(http.ResponseWriter, *http.Request), methods ...string) *Route {
 	if methods == nil {
-		r.methods[""] = handler
+		r.Handlers[""] = handler
 	} else {
 		for _, m := range methods {
-			r.methods[m] = handler
+			r.Handlers[m] = handler
 		}
 	}
 	return r
@@ -188,19 +188,20 @@ func (r *Route) Trace(handler func(http.ResponseWriter, *http.Request)) *Route {
 
 // methodHandler returns the handler registered for the given HTTP method.
 func (r *Route) methodHandler(method string) func(http.ResponseWriter, *http.Request) {
-	if h, ok := r.methods[method]; ok {
+	if h, ok := r.Handlers[method]; ok {
 		return h
 	}
-	if method == "HEAD" {
-		if h, ok := r.methods["GET"]; ok {
+	switch method {
+	case "HEAD":
+		if h, ok := r.Handlers["GET"]; ok {
 			return h
 		}
-	}
-	if h, ok := r.methods[""]; ok {
-		return h
-	}
-	if method == "OPTIONS" {
+	case "OPTIONS":
 		return r.allowHandler(200)
+	default:
+		if h, ok := r.Handlers[""]; ok {
+			return h
+		}
 	}
 	return r.allowHandler(405)
 }
@@ -209,7 +210,7 @@ func (r *Route) methodHandler(method string) func(http.ResponseWriter, *http.Req
 // status code and allowed methods.
 func (r *Route) allowHandler(code int) func(http.ResponseWriter, *http.Request) {
 	allowed := []string{"OPTIONS"}
-	for m, _ := range r.methods {
+	for m, _ := range r.Handlers {
 		if m != "" && m != "OPTIONS" {
 			allowed = append(allowed, m)
 		}

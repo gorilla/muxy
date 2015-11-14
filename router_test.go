@@ -117,8 +117,8 @@ func TestMatch(t *testing.T) {
 		route := r.match(req)
 		if route == nil {
 			t.Errorf("%q: expected to match %q", v.url, v.pattern)
-		} else if route.pattern != v.pattern {
-			t.Errorf("%q: got pattern %q, want %q", v.url, route.pattern, v.pattern)
+		} else if route.Pattern != v.pattern {
+			t.Errorf("%q: got pattern %q, want %q", v.url, route.Pattern, v.pattern)
 		}
 	}
 }
