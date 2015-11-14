@@ -64,7 +64,7 @@ func (r *Router) URL(name string, vars url.Values) string {
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// not implemented...
 	if route := r.match(req); route != nil {
-		route.methodHandler(req.Method)(w, req)
+		route.handler(req).ServeHTTP(w, req)
 		return
 	}
 	r.NotFoundHandler(w, req)
@@ -111,9 +111,10 @@ func newRoute(r *Router, pattern string) *Route {
 // Route stores a URL pattern to be matched and the handler to be served
 // in case of a match, optionally mapping HTTP methods to different handlers.
 type Route struct {
-	router   *Router
-	Pattern  string
-	Handlers map[string]func(http.ResponseWriter, *http.Request)
+	router     *Router
+	middleware []func(http.Handler) http.Handler
+	Pattern    string
+	Handlers   map[string]func(http.ResponseWriter, *http.Request)
 	// ...
 }
 
@@ -123,6 +124,12 @@ func (r *Route) Name(name string) *Route {
 		panic(fmt.Sprintf("mux: duplicated name %q", name))
 	}
 	r.router.routes[name] = r
+	return r
+}
+
+// Use appends the provided middleware to this route.
+func (r *Route) Use(middleware ...func(http.Handler) http.Handler) *Route {
+	r.middleware = append(r.middleware, middleware...)
 	return r
 }
 
@@ -184,6 +191,15 @@ func (r *Route) Put(handler func(http.ResponseWriter, *http.Request)) *Route {
 // Trace sets the given handler to be served for the request method TRACE.
 func (r *Route) Trace(handler func(http.ResponseWriter, *http.Request)) *Route {
 	return r.Handle(handler, "TRACE")
+}
+
+// handler returns a handler for the request, applying registered middleware.
+func (r *Route) handler(req *http.Request) http.Handler {
+	var h http.Handler = http.HandlerFunc(r.methodHandler(req.Method))
+	for i := len(r.middleware) - 1; i >= 0; i-- {
+		h = r.middleware[i](h)
+	}
+	return h
 }
 
 // methodHandler returns the handler registered for the given HTTP method.
