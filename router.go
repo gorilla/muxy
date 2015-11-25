@@ -9,24 +9,50 @@ import (
 
 // New creates a new Router.
 func New() *Router {
-	return &Router{
+	r := &Router{
 		matcher:         newPathMatcher(),
-		routes:          map[string]*Route{},
+		namedRoutes:     map[string]*Route{},
 		NotFoundHandler: http.NotFound,
 	}
+	r.router = r
+	return r
 }
 
 // Router matches the URL of incoming requests against
 // registered routes and calls the appropriate handler.
 type Router struct {
+	router          *Router
+	pattern         string
+	name            string
+	middleware      []func(http.Handler) http.Handler
 	matcher         matcher
-	routes          map[string]*Route
+	namedRoutes     map[string]*Route
 	NotFoundHandler func(http.ResponseWriter, *http.Request)
 	// ...
 }
 
+// Name sets the name prefix used for new routes.
+func (r *Router) Name(name string) *Router {
+	r.name = r.name + name
+	return r
+}
+
+// Use sets the middleware used for new routes.
+func (r *Router) Use(middleware ...func(http.Handler) http.Handler) *Router {
+	r.middleware = append(r.middleware, middleware...)
+	return r
+}
+
 // Route creates a new Route for the given pattern.
 func (r *Router) Route(pattern string) *Route {
+	route := r.router.route(r.pattern + pattern)
+	route.NamePrefix = r.name
+	route.Middleware = r.middleware
+	return route
+}
+
+// route creates a new Route for the given pattern.
+func (r *Router) route(pattern string) *Route {
 	m, pm := newPattern(r.matcher, pattern)
 	r.matcher = m
 	if pm.leaf == nil {
@@ -39,8 +65,13 @@ func (r *Router) Route(pattern string) *Route {
 }
 
 // Sub creates a subrouter for the given pattern prefix.
-func (r *Router) Sub(pattern string) *Subrouter {
-	return &Subrouter{router: r, prefix: pattern}
+func (r *Router) Sub(pattern string) *Router {
+	return &Router{
+		router:     r.router,
+		pattern:    r.pattern + pattern,
+		name:       r.name,
+		middleware: r.middleware,
+	}
 }
 
 // Vars returns the matched variables for the given request.
@@ -54,7 +85,7 @@ func (r *Router) Vars(req *http.Request) url.Values {
 
 // URL returns a URL segment for the given route name and variables.
 func (r *Router) URL(name string, vars url.Values) string {
-	if route, ok := r.routes[name]; ok {
+	if route, ok := r.namedRoutes[name]; ok {
 		return route.url(vars)
 	}
 	return ""
@@ -81,28 +112,10 @@ func (r *Router) match(req *http.Request) *Route {
 
 // -----------------------------------------------------------------------------
 
-// Subrouter creates routes with a predefined pattern prefix.
-type Subrouter struct {
-	router *Router
-	prefix string
-}
-
-// Route creates a new Route for the given pattern.
-func (s *Subrouter) Route(pattern string) *Route {
-	return s.router.Route(s.prefix + pattern)
-}
-
-// Sub creates a subrouter for the given pattern prefix.
-func (s *Subrouter) Sub(pattern string) *Subrouter {
-	return s.router.Sub(s.prefix + pattern)
-}
-
-// -----------------------------------------------------------------------------
-
 // newRoute creates a new Route.
 func newRoute(r *Router, pattern string) *Route {
 	return &Route{
-		router:   r,
+		Router:   r,
 		Pattern:  pattern,
 		Handlers: map[string]func(http.ResponseWriter, *http.Request){},
 	}
@@ -111,25 +124,20 @@ func newRoute(r *Router, pattern string) *Route {
 // Route stores a URL pattern to be matched and the handler to be served
 // in case of a match, optionally mapping HTTP methods to different handlers.
 type Route struct {
-	router     *Router
-	middleware []func(http.Handler) http.Handler
+	Router     *Router
 	Pattern    string
+	NamePrefix string
+	Middleware []func(http.Handler) http.Handler
 	Handlers   map[string]func(http.ResponseWriter, *http.Request)
-	// ...
 }
 
 // Name defines the route name used for URL building.
 func (r *Route) Name(name string) *Route {
-	if _, ok := r.router.routes[name]; ok {
+	name = r.NamePrefix + name
+	if _, ok := r.Router.namedRoutes[name]; ok {
 		panic(fmt.Sprintf("mux: duplicated name %q", name))
 	}
-	r.router.routes[name] = r
-	return r
-}
-
-// Use appends the provided middleware to this route.
-func (r *Route) Use(middleware ...func(http.Handler) http.Handler) *Route {
-	r.middleware = append(r.middleware, middleware...)
+	r.Router.namedRoutes[name] = r
 	return r
 }
 
@@ -196,8 +204,8 @@ func (r *Route) Trace(handler func(http.ResponseWriter, *http.Request)) *Route {
 // handler returns a handler for the request, applying registered middleware.
 func (r *Route) handler(req *http.Request) http.Handler {
 	var h http.Handler = http.HandlerFunc(r.methodHandler(req.Method))
-	for i := len(r.middleware) - 1; i >= 0; i-- {
-		h = r.middleware[i](h)
+	for i := len(r.Middleware) - 1; i >= 0; i-- {
+		h = r.Middleware[i](h)
 	}
 	return h
 }
