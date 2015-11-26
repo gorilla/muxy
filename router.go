@@ -77,7 +77,7 @@ func (r *Router) Sub(pattern string) *Router {
 // Vars returns the matched variables for the given request.
 func (r *Router) Vars(req *http.Request) url.Values {
 	// oooh... what a muxy trick!
-	if route := r.match(req); route != nil {
+	if route := r.router.match(req); route != nil {
 		return route.vars(req)
 	}
 	return nil
@@ -85,7 +85,7 @@ func (r *Router) Vars(req *http.Request) url.Values {
 
 // URL returns a URL segment for the given route name and variables.
 func (r *Router) URL(name string, vars url.Values) string {
-	if route, ok := r.namedRoutes[name]; ok {
+	if route, ok := r.router.namedRoutes[name]; ok {
 		return route.url(vars)
 	}
 	return ""
@@ -94,7 +94,7 @@ func (r *Router) URL(name string, vars url.Values) string {
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// not implemented...
-	if route := r.match(req); route != nil {
+	if route := r.router.match(req); route != nil {
 		route.handler(req).ServeHTTP(w, req)
 		return
 	}
