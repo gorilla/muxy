@@ -216,12 +216,13 @@ func (r *Route) methodHandler(method string) func(http.ResponseWriter, *http.Req
 		return h
 	}
 	switch method {
+	case "OPTIONS":
+		return r.allowHandler(200)
 	case "HEAD":
 		if h, ok := r.Handlers["GET"]; ok {
 			return h
 		}
-	case "OPTIONS":
-		return r.allowHandler(200)
+		fallthrough
 	default:
 		if h, ok := r.Handlers[""]; ok {
 			return h
