@@ -4,15 +4,64 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
+
+	"golang.org/x/net/context"
 )
+
+// Handler is a context aware version of net/http's Handler interface.
+//
+// This interface will (or will not) change depending on how context is
+// implemented in net/http. See:
+//
+//     https://github.com/golang/go/issues/13021
+type Handler interface {
+	ServeHTTP(context.Context, http.ResponseWriter, *http.Request)
+}
+
+// HandlerFunc is a context aware version of net/http's HandlerFunc type.
+//
+// See the docs from Handler for possible signatures changes in the future.
+type HandlerFunc func(context.Context, http.ResponseWriter, *http.Request)
+
+// ServeHTTP calls f(ctx, w, r).
+func (f HandlerFunc) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	f(ctx, w, r)
+}
+
+// -----------------------------------------------------------------------------
+
+// ctxKey is used to set and retrieve route variables from the context.
+type ctxKey int
+
+// varsKey is the key used to set and retrieve route variables from the context.
+var varsKey ctxKey = 0
+
+// Vars returns the route variables from the given context.
+func Vars(ctx context.Context) map[string]string {
+	if vars, ok := ctx.Value(varsKey).(map[string]string); ok {
+		return vars
+	}
+	return map[string]string{}
+}
+
+// -----------------------------------------------------------------------------
+
+// Matcher registers patterns as routes, matches requests and builds URLs.
+type Matcher interface {
+	Route(pattern string) (*Route, error)
+	Match(r *http.Request) (Handler, map[string]string)
+	URL(r *Route, values map[string]string) (*url.URL, error)
+}
+
+// -----------------------------------------------------------------------------
 
 // New creates a new Router.
 func New() *Router {
+	// TODO: options variadic argument (to set matcher, panic handler etc).
 	r := &Router{
-		matcher:         newPathMatcher(),
-		namedRoutes:     map[string]*Route{},
-		NotFoundHandler: http.NotFound,
+		matcher:     NewPathMatcher(),
+		routes:      map[string]*Route{},
+		namedRoutes: map[string]*Route{},
 	}
 	r.router = r
 	return r
@@ -21,14 +70,27 @@ func New() *Router {
 // Router matches the URL of incoming requests against
 // registered routes and calls the appropriate handler.
 type Router struct {
-	router          *Router
-	pattern         string
-	name            string
-	middleware      []func(http.Handler) http.Handler
-	matcher         matcher
-	namedRoutes     map[string]*Route
-	NotFoundHandler func(http.ResponseWriter, *http.Request)
-	// ...
+	// matcher holds the Matcher implementation used by this router.
+	matcher Matcher
+	// routes maps all route patterns to their correspondent routes.
+	routes map[string]*Route
+	// namedRoutes maps route names to their correspondent routes.
+	namedRoutes map[string]*Route
+	// router holds the main router referenced by subrouters.
+	router *Router
+	// pattern holds the pattern prefix used to create new routes.
+	pattern string
+	// name holds the name prefix used to create new routes.
+	name string
+}
+
+// Sub creates a subrouter for the given pattern prefix.
+func (r *Router) Sub(pattern string) *Router {
+	return &Router{
+		router:  r.router,
+		pattern: r.pattern + pattern,
+		name:    r.name,
+	}
 }
 
 // Name sets the name prefix used for new routes.
@@ -37,225 +99,140 @@ func (r *Router) Name(name string) *Router {
 	return r
 }
 
-// Use sets the middleware used for new routes.
-func (r *Router) Use(middleware ...func(http.Handler) http.Handler) *Router {
-	r.middleware = append(r.middleware, middleware...)
+// Mount imports all routes from the given router into this one.
+//
+// Combined with Sub() and Name(), it is possible to submount a router
+// defined in a different package using pattern and name prefixes:
+//
+//     r := New()
+//     s := r.Sub("/admin").Name("admin:").Mount(admin.Router)
+func (r *Router) Mount(router *Router) *Router {
+	for _, v := range router.router.routes {
+		route := r.Route(v.pattern).Name(v.name)
+		for method, handler := range v.Handlers {
+			route.Handle(handler, method)
+		}
+	}
 	return r
 }
 
 // Route creates a new Route for the given pattern.
 func (r *Router) Route(pattern string) *Route {
-	route := r.router.route(r.pattern + pattern)
-	route.NamePrefix = r.name
-	route.Middleware = r.middleware
+	pattern = r.pattern + pattern
+	route, err := r.router.matcher.Route(pattern)
+	if err != nil {
+		panic(err)
+	}
+	route.router = r.router
+	route.pattern = pattern
+	route.name = r.name
+	r.router.routes[pattern] = route
 	return route
 }
 
-// route creates a new Route for the given pattern.
-func (r *Router) route(pattern string) *Route {
-	m, pm := newPattern(r.matcher, pattern)
-	r.matcher = m
-	if pm.leaf == nil {
-		pm.leaf = newRoute(r, pattern)
-	}
-	if pm.leaf.Pattern != pattern {
-		panic(fmt.Sprintf("mux: pattern %q has a registered equivalent %q", pattern, pm.leaf.Pattern))
-	}
-	return pm.leaf
-}
-
-// Sub creates a subrouter for the given pattern prefix.
-func (r *Router) Sub(pattern string) *Router {
-	return &Router{
-		router:     r.router,
-		pattern:    r.pattern + pattern,
-		name:       r.name,
-		middleware: r.middleware,
-	}
-}
-
-// Vars returns the matched variables for the given request.
-func (r *Router) Vars(req *http.Request) url.Values {
-	// oooh... what a muxy trick!
-	if route := r.router.match(req); route != nil {
-		return route.vars(req)
+// URL returns a URL for the given route name and variables.
+func (r *Router) URL(name string, values map[string]string) *url.URL {
+	if route, ok := r.router.namedRoutes[name]; ok {
+		u, err := r.router.matcher.URL(route, values)
+		if err != nil {
+			panic(err)
+		}
+		return u
 	}
 	return nil
-}
-
-// URL returns a URL segment for the given route name and variables.
-func (r *Router) URL(name string, vars url.Values) string {
-	if route, ok := r.router.namedRoutes[name]; ok {
-		return route.url(vars)
-	}
-	return ""
 }
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// not implemented...
-	if route := r.router.match(req); route != nil {
-		route.handler(req).ServeHTTP(w, req)
+	if handler, vars := r.router.matcher.Match(req); handler != nil {
+		ctx := context.WithValue(context.Background(), varsKey, vars)
+		handler.ServeHTTP(ctx, w, req)
 		return
 	}
-	r.NotFoundHandler(w, req)
-}
-
-// match returns the matched route for the given request.
-func (r *Router) match(req *http.Request) *Route {
-	u := req.URL
-	if pm := r.matcher.match(u.Scheme, u.Host, u.Path[1:]); pm != nil {
-		return pm.leaf
-	}
-	return nil
+	http.NotFound(w, req)
 }
 
 // -----------------------------------------------------------------------------
 
-// newRoute creates a new Route.
-func newRoute(r *Router, pattern string) *Route {
-	return &Route{
-		Router:   r,
-		Pattern:  pattern,
-		Handlers: map[string]func(http.ResponseWriter, *http.Request){},
-	}
-}
-
 // Route stores a URL pattern to be matched and the handler to be served
 // in case of a match, optionally mapping HTTP methods to different handlers.
 type Route struct {
-	Router     *Router
-	Pattern    string
-	NamePrefix string
-	Middleware []func(http.Handler) http.Handler
-	Handlers   map[string]func(http.ResponseWriter, *http.Request)
+	// router holds the router that registered this route.
+	router *Router
+	// pattern holds the route pattern.
+	pattern string
+	// name holds the route name.
+	name string
+	// Handlers maps request methods to the handlers that will handle them.
+	Handlers map[string]Handler
 }
 
 // Name defines the route name used for URL building.
 func (r *Route) Name(name string) *Route {
-	name = r.NamePrefix + name
-	if _, ok := r.Router.namedRoutes[name]; ok {
-		panic(fmt.Sprintf("mux: duplicated name %q", name))
+	r.name = r.name + name
+	if _, ok := r.router.namedRoutes[r.name]; ok {
+		panic(fmt.Sprintf("mux: duplicated name %q", r.name))
 	}
-	r.Router.namedRoutes[name] = r
+	r.router.namedRoutes[r.name] = r
 	return r
 }
 
 // Handle sets the given handler to be served for the optional request methods.
-func (r *Route) Handle(handler func(http.ResponseWriter, *http.Request), methods ...string) *Route {
+func (r *Route) Handle(h Handler, methods ...string) *Route {
 	if methods == nil {
-		r.Handlers[""] = handler
+		r.Handlers[""] = h
 	} else {
 		for _, m := range methods {
-			r.Handlers[m] = handler
+			r.Handlers[m] = h
 		}
 	}
 	return r
 }
 
 // Below are convenience methods that map HTTP verbs to handlers, equivalent
-// to call r.Handle(handler, "METHOD-NAME").
+// to call r.Handle(h, "METHOD-NAME").
 
 // Connect sets the given handler to be served for the request method CONNECT.
-func (r *Route) Connect(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "CONNECT")
+func (r *Route) Connect(h Handler) *Route {
+	return r.Handle(h, "CONNECT")
 }
 
 // Delete sets the given handler to be served for the request method DELETE.
-func (r *Route) Delete(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "DELETE")
+func (r *Route) Delete(h Handler) *Route {
+	return r.Handle(h, "DELETE")
 }
 
 // Get sets the given handler to be served for the request method GET.
-func (r *Route) Get(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "GET")
+func (r *Route) Get(h Handler) *Route {
+	return r.Handle(h, "GET")
 }
 
 // Head sets the given handler to be served for the request method HEAD.
-func (r *Route) Head(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "HEAD")
+func (r *Route) Head(h Handler) *Route {
+	return r.Handle(h, "HEAD")
 }
 
 // Options sets the given handler to be served for the request method OPTIONS.
-func (r *Route) Options(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "OPTIONS")
+func (r *Route) Options(h Handler) *Route {
+	return r.Handle(h, "OPTIONS")
 }
 
 // PATCH sets the given handler to be served for the request method PATCH.
-func (r *Route) Patch(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "PATCH")
+func (r *Route) Patch(h Handler) *Route {
+	return r.Handle(h, "PATCH")
 }
 
 // POST sets the given handler to be served for the request method POST.
-func (r *Route) Post(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "POST")
+func (r *Route) Post(h Handler) *Route {
+	return r.Handle(h, "POST")
 }
 
 // Put sets the given handler to be served for the request method PUT.
-func (r *Route) Put(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "PUT")
+func (r *Route) Put(h Handler) *Route {
+	return r.Handle(h, "PUT")
 }
 
 // Trace sets the given handler to be served for the request method TRACE.
-func (r *Route) Trace(handler func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(handler, "TRACE")
-}
-
-// handler returns a handler for the request, applying registered middleware.
-func (r *Route) handler(req *http.Request) http.Handler {
-	var h http.Handler = http.HandlerFunc(r.methodHandler(req.Method))
-	for i := len(r.Middleware) - 1; i >= 0; i-- {
-		h = r.Middleware[i](h)
-	}
-	return h
-}
-
-// methodHandler returns the handler registered for the given HTTP method.
-func (r *Route) methodHandler(method string) func(http.ResponseWriter, *http.Request) {
-	if h, ok := r.Handlers[method]; ok {
-		return h
-	}
-	switch method {
-	case "OPTIONS":
-		return r.allowHandler(200)
-	case "HEAD":
-		if h, ok := r.Handlers["GET"]; ok {
-			return h
-		}
-		fallthrough
-	default:
-		if h, ok := r.Handlers[""]; ok {
-			return h
-		}
-	}
-	return r.allowHandler(405)
-}
-
-// allowHandler returns a handler that sets a header with the given
-// status code and allowed methods.
-func (r *Route) allowHandler(code int) func(http.ResponseWriter, *http.Request) {
-	allowed := []string{"OPTIONS"}
-	for m, _ := range r.Handlers {
-		if m != "" && m != "OPTIONS" {
-			allowed = append(allowed, m)
-		}
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Allow", strings.Join(allowed, ", "))
-		w.WriteHeader(code)
-		fmt.Fprintln(w, code, http.StatusText(code))
-	}
-}
-
-// url returns a URL segment for the given variables.
-func (r *Route) url(vars url.Values) string {
-	// not implemented...
-	return ""
-}
-
-// vars returns the matched variables for the given request.
-func (r *Route) vars(req *http.Request) url.Values {
-	// not implemented...
-	return nil
+func (r *Route) Trace(h Handler) *Route {
+	return r.Handle(h, "TRACE")
 }

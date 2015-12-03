@@ -1,5 +1,6 @@
 package muxy
 
+/*
 import (
 	"io"
 	"net/http"
@@ -122,3 +123,4 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
+*/
