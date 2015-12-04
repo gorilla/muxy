@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
-	"golang.org/x/net/context"
 )
 
 func NewPathMatcher() *PathMatcher {
@@ -23,7 +21,7 @@ func (m *PathMatcher) Route(pattern string) (*Route, error) {
 	return nil, nil
 }
 
-func (m *PathMatcher) Match(r *http.Request) (Handler, map[string]string) {
+func (m *PathMatcher) Match(r *http.Request) (http.Handler, map[string]string) {
 	// TODO...
 	return nil, nil
 }
@@ -34,7 +32,10 @@ func (m *PathMatcher) URL(r *Route, values map[string]string) (*url.URL, error) 
 }
 
 // methodHandler returns the handler registered for the given HTTP method.
-func methodHandler(handlers map[string]Handler, method string) Handler {
+func methodHandler(handlers map[string]http.Handler, method string) http.Handler {
+	if handlers == nil || len(handlers) == 0 {
+		return nil
+	}
 	if h, ok := handlers[method]; ok {
 		return h
 	}
@@ -56,7 +57,10 @@ func methodHandler(handlers map[string]Handler, method string) Handler {
 
 // allowHandler returns a handler that sets a header with the given
 // status code and allowed methods.
-func allowHandler(handlers map[string]Handler, code int) Handler {
+func allowHandler(handlers map[string]http.Handler, code int) http.Handler {
+	if handlers == nil || len(handlers) == 0 {
+		return nil
+	}
 	allowed := make([]string, len(handlers)+1)
 	allowed[0] = "OPTIONS"
 	i := 1
@@ -66,9 +70,9 @@ func allowHandler(handlers map[string]Handler, code int) Handler {
 			i++
 		}
 	}
-	return HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Allow", strings.Join(allowed[:i], ", "))
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
 		w.WriteHeader(code)
 		fmt.Fprintln(w, code, http.StatusText(code))
 	})

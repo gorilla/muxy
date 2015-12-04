@@ -4,52 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-
-	"golang.org/x/net/context"
 )
-
-// Handler is a context aware version of net/http's Handler interface.
-//
-// This interface will (or will not) change depending on how context is
-// implemented in net/http. See:
-//
-//     https://github.com/golang/go/issues/13021
-type Handler interface {
-	ServeHTTP(context.Context, http.ResponseWriter, *http.Request)
-}
-
-// HandlerFunc is a context aware version of net/http's HandlerFunc type.
-//
-// See the docs from Handler for possible signatures changes in the future.
-type HandlerFunc func(context.Context, http.ResponseWriter, *http.Request)
-
-// ServeHTTP calls f(ctx, w, r).
-func (f HandlerFunc) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	f(ctx, w, r)
-}
-
-// -----------------------------------------------------------------------------
-
-// ctxKey is used to set and retrieve route variables from the context.
-type ctxKey int
-
-// varsKey is the key used to set and retrieve route variables from the context.
-var varsKey ctxKey = 0
-
-// Vars returns the route variables from the given context.
-func Vars(ctx context.Context) map[string]string {
-	if vars, ok := ctx.Value(varsKey).(map[string]string); ok {
-		return vars
-	}
-	return map[string]string{}
-}
-
-// -----------------------------------------------------------------------------
 
 // Matcher registers patterns as routes, matches requests and builds URLs.
 type Matcher interface {
 	Route(pattern string) (*Route, error)
-	Match(r *http.Request) (Handler, map[string]string)
+	Match(r *http.Request) (http.Handler, map[string]string)
 	URL(r *Route, values map[string]string) (*url.URL, error)
 }
 
@@ -144,12 +104,17 @@ func (r *Router) URL(name string, values map[string]string) *url.URL {
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if handler, vars := r.router.matcher.Match(req); handler != nil {
-		ctx := context.WithValue(context.Background(), varsKey, vars)
-		handler.ServeHTTP(ctx, w, req)
+	if h, _ := r.router.matcher.Match(req); h != nil {
+		h.ServeHTTP(w, req)
 		return
 	}
 	http.NotFound(w, req)
+}
+
+// Vars returns the route variables from the given request.
+func (r *Router) Vars(req *http.Request) map[string]string {
+	// TODO...
+	return nil
 }
 
 // -----------------------------------------------------------------------------
@@ -164,7 +129,7 @@ type Route struct {
 	// name holds the route name.
 	name string
 	// Handlers maps request methods to the handlers that will handle them.
-	Handlers map[string]Handler
+	Handlers map[string]http.Handler
 }
 
 // Name defines the route name used for URL building.
@@ -178,7 +143,10 @@ func (r *Route) Name(name string) *Route {
 }
 
 // Handle sets the given handler to be served for the optional request methods.
-func (r *Route) Handle(h Handler, methods ...string) *Route {
+func (r *Route) Handle(h http.Handler, methods ...string) *Route {
+	if r.Handlers == nil {
+		r.Handlers = map[string]http.Handler{}
+	}
 	if methods == nil {
 		r.Handlers[""] = h
 	} else {
@@ -189,50 +157,50 @@ func (r *Route) Handle(h Handler, methods ...string) *Route {
 	return r
 }
 
-// Below are convenience methods that map HTTP verbs to handlers, equivalent
-// to call r.Handle(h, "METHOD-NAME").
+// Below are convenience methods that map HTTP verbs to http.Handler, equivalent
+// to call r.Handle(http.HandlerFunc(h), "METHOD-NAME").
 
 // Connect sets the given handler to be served for the request method CONNECT.
-func (r *Route) Connect(h Handler) *Route {
-	return r.Handle(h, "CONNECT")
+func (r *Route) Connect(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "CONNECT")
 }
 
 // Delete sets the given handler to be served for the request method DELETE.
-func (r *Route) Delete(h Handler) *Route {
-	return r.Handle(h, "DELETE")
+func (r *Route) Delete(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "DELETE")
 }
 
 // Get sets the given handler to be served for the request method GET.
-func (r *Route) Get(h Handler) *Route {
-	return r.Handle(h, "GET")
+func (r *Route) Get(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "GET")
 }
 
 // Head sets the given handler to be served for the request method HEAD.
-func (r *Route) Head(h Handler) *Route {
-	return r.Handle(h, "HEAD")
+func (r *Route) Head(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "HEAD")
 }
 
 // Options sets the given handler to be served for the request method OPTIONS.
-func (r *Route) Options(h Handler) *Route {
-	return r.Handle(h, "OPTIONS")
+func (r *Route) Options(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "OPTIONS")
 }
 
 // PATCH sets the given handler to be served for the request method PATCH.
-func (r *Route) Patch(h Handler) *Route {
-	return r.Handle(h, "PATCH")
+func (r *Route) Patch(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "PATCH")
 }
 
 // POST sets the given handler to be served for the request method POST.
-func (r *Route) Post(h Handler) *Route {
-	return r.Handle(h, "POST")
+func (r *Route) Post(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "POST")
 }
 
 // Put sets the given handler to be served for the request method PUT.
-func (r *Route) Put(h Handler) *Route {
-	return r.Handle(h, "PUT")
+func (r *Route) Put(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "PUT")
 }
 
 // Trace sets the given handler to be served for the request method TRACE.
-func (r *Route) Trace(h Handler) *Route {
-	return r.Handle(h, "TRACE")
+func (r *Route) Trace(h func(http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(http.HandlerFunc(h), "TRACE")
 }
