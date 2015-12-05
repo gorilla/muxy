@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sync"
 )
 
 // Matcher registers patterns as routes, matches requests and builds URLs.
@@ -104,8 +105,10 @@ func (r *Router) URL(name string, values map[string]string) *url.URL {
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if h, _ := r.router.matcher.Match(req); h != nil {
+	if h, v := r.router.matcher.Match(req); h != nil {
+		setVars(req, v)
 		h.ServeHTTP(w, req)
+		deleteVars(req)
 		return
 	}
 	http.NotFound(w, req)
@@ -113,8 +116,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // Vars returns the route variables from the given request.
 func (r *Router) Vars(req *http.Request) map[string]string {
-	// TODO...
-	return nil
+	return getVars(req)
 }
 
 // -----------------------------------------------------------------------------
@@ -203,4 +205,36 @@ func (r *Route) Put(h func(http.ResponseWriter, *http.Request)) *Route {
 // Trace sets the given handler to be served for the request method TRACE.
 func (r *Route) Trace(h func(http.ResponseWriter, *http.Request)) *Route {
 	return r.Handle(http.HandlerFunc(h), "TRACE")
+}
+
+// -----------------------------------------------------------------------------
+
+// Until net/context is part of the standard library, we'll use a map/lock
+// setup to store the route variables for a request. This is to avoid defining
+// our own handler signature, which would not be The Way To Go(tm).
+var (
+	mutex sync.RWMutex
+	vars  = map[*http.Request]map[string]string{}
+)
+
+// setVars stores the route variabels for a given request.
+func setVars(r *http.Request, v map[string]string) {
+	mutex.Lock()
+	vars[r] = v
+	mutex.Unlock()
+}
+
+// getVars returns the route variables stored for a given request.
+func getVars(r *http.Request) map[string]string {
+	mutex.RLock()
+	v := vars[r]
+	mutex.RUnlock()
+	return v
+}
+
+// deleteVars deletes the route variabels for a given request.
+func deleteVars(r *http.Request) {
+	mutex.Lock()
+	delete(vars, r)
+	mutex.Unlock()
 }
