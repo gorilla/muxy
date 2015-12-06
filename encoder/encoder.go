@@ -1,4 +1,4 @@
-package muxy
+package encoder
 
 import (
 	"fmt"
@@ -42,8 +42,8 @@ func init() {
 	}
 }
 
-// encodePathSegment percent encodes bytes not allowed in a path segment.
-func encodePathSegment(s string) string {
+// EncodePathSegment percent encodes bytes not allowed in a path segment.
+func EncodePathSegment(s string) string {
 	// Count bytes to escape.
 	n := 0
 	for i := 0; i < len(s); i++ {
@@ -87,8 +87,8 @@ func hexValue(b byte) byte {
 	}
 }
 
-// decodePathSegment decodes percent encodings in a path segment.
-func decodePathSegment(s string) (string, error) {
+// DecodePathSegment decodes percent encodings in a path segment.
+func DecodePathSegment(s string) (string, error) {
 	// Use optimized standard library function to quickly test for the common
 	// case where no decoding is required.
 	i := strings.IndexByte(s, '%')

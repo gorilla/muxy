@@ -58,9 +58,6 @@ func methodHandler(handlers map[string]http.Handler, method string) http.Handler
 // allowHandler returns a handler that sets a header with the given
 // status code and allowed methods.
 func allowHandler(handlers map[string]http.Handler, code int) http.Handler {
-	if handlers == nil || len(handlers) == 0 {
-		return nil
-	}
 	allowed := make([]string, len(handlers)+1)
 	allowed[0] = "OPTIONS"
 	i := 1
@@ -72,7 +69,7 @@ func allowHandler(handlers map[string]http.Handler, code int) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Allow", strings.Join(allowed, ", "))
+		w.Header().Set("Allow", strings.Join(allowed[:i], ", "))
 		w.WriteHeader(code)
 		fmt.Fprintln(w, code, http.StatusText(code))
 	})

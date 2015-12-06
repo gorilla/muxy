@@ -16,15 +16,52 @@ type Matcher interface {
 
 // -----------------------------------------------------------------------------
 
+// MatcherOption defines a custom matcher to be used by the router.
+// The returned value must be passed as an argument to New():
+//
+//     r := muxy.New(MatcherOption(CustomMatcher))
+//
+// It can only be used on New() and panics if the matcher was already set.
+func MatcherOption(m Matcher) func(*Router) {
+	return func(r *Router) {
+		if r.matcher != nil {
+			panic("muxy: matcher is already set")
+		}
+		r.matcher = m
+	}
+}
+
+// PanicHandlerOption defines the panic handler to be used by the router.
+// This handler is called if a panic occurs during ServeHTTP.
+// The returned value must be passed as an argument to New():
+//
+//     r := muxy.New(PanicHandlerOption(CustomHandler))
+func PanicHandlerOption(h func(http.ResponseWriter, *http.Request, interface{})) func(*Router) {
+	return func(r *Router) {
+		r.panicHandler = h
+	}
+}
+
+// -----------------------------------------------------------------------------
+
 // New creates a new Router.
-func New() *Router {
-	// TODO: options variadic argument (to set matcher, panic handler etc).
+//
+// The optional options arguments can define a custom matcher and/or
+// panic handler to be used by the router:
+//
+//     r := muxy.New(MatcherOption(CustomMatcher), PanicHandlerOption(CustomHandler))
+func New(options ...func(*Router)) *Router {
 	r := &Router{
-		matcher:     NewPathMatcher(),
-		routes:      map[string]*Route{},
+		routes:      map[*Route]string{},
 		namedRoutes: map[string]*Route{},
 	}
 	r.router = r
+	for _, o := range options {
+		o(r)
+	}
+	if r.matcher == nil {
+		r.matcher = NewPathMatcher()
+	}
 	return r
 }
 
@@ -33,8 +70,10 @@ func New() *Router {
 type Router struct {
 	// matcher holds the Matcher implementation used by this router.
 	matcher Matcher
-	// routes maps all route patterns to their correspondent routes.
-	routes map[string]*Route
+	// panicHandler holds the handler used in case of panic during ServeHTTP.
+	panicHandler func(http.ResponseWriter, *http.Request, interface{})
+	// routes maps all routes to their correspondent patterns.
+	routes map[*Route]string
 	// namedRoutes maps route names to their correspondent routes.
 	namedRoutes map[string]*Route
 	// router holds the main router referenced by subrouters.
@@ -65,10 +104,10 @@ func (r *Router) Name(name string) *Router {
 // Combined with Sub() and Name(), it is possible to submount a router
 // defined in a different package using pattern and name prefixes:
 //
-//     r := New()
+//     r := muxy.New()
 //     s := r.Sub("/admin").Name("admin:").Mount(admin.Router)
 func (r *Router) Mount(router *Router) *Router {
-	for _, v := range router.router.routes {
+	for v, _ := range router.router.routes {
 		route := r.Route(v.pattern).Name(v.name)
 		for method, handler := range v.Handlers {
 			route.Handle(handler, method)
@@ -87,7 +126,7 @@ func (r *Router) Route(pattern string) *Route {
 	route.router = r.router
 	route.pattern = pattern
 	route.name = r.name
-	r.router.routes[pattern] = route
+	r.router.routes[route] = pattern
 	return route
 }
 
@@ -105,18 +144,20 @@ func (r *Router) URL(name string, values map[string]string) *url.URL {
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	defer func() {
+		if r.panicHandler != nil {
+			if v := recover(); v != nil {
+				r.panicHandler(w, req, v)
+			}
+		}
+		deleteVars(req)
+	}()
 	if h, v := r.router.matcher.Match(req); h != nil {
 		setVars(req, v)
 		h.ServeHTTP(w, req)
-		deleteVars(req)
 		return
 	}
 	http.NotFound(w, req)
-}
-
-// Vars returns the route variables from the given request.
-func (r *Router) Vars(req *http.Request) map[string]string {
-	return getVars(req)
 }
 
 // -----------------------------------------------------------------------------
@@ -138,7 +179,7 @@ type Route struct {
 func (r *Route) Name(name string) *Route {
 	r.name = r.name + name
 	if _, ok := r.router.namedRoutes[r.name]; ok {
-		panic(fmt.Sprintf("mux: duplicated name %q", r.name))
+		panic(fmt.Sprintf("muxy: duplicated name %q", r.name))
 	}
 	r.router.namedRoutes[r.name] = r
 	return r
@@ -217,22 +258,22 @@ var (
 	vars  = map[*http.Request]map[string]string{}
 )
 
-// setVars stores the route variabels for a given request.
-func setVars(r *http.Request, v map[string]string) {
-	mutex.Lock()
-	vars[r] = v
-	mutex.Unlock()
-}
-
-// getVars returns the route variables stored for a given request.
-func getVars(r *http.Request) map[string]string {
+// Vars returns the route variables stored for a given request.
+func Vars(r *http.Request) map[string]string {
 	mutex.RLock()
 	v := vars[r]
 	mutex.RUnlock()
 	return v
 }
 
-// deleteVars deletes the route variabels for a given request.
+// setVars stores the route variables for a given request.
+func setVars(r *http.Request, v map[string]string) {
+	mutex.Lock()
+	vars[r] = v
+	mutex.Unlock()
+}
+
+// deleteVars deletes the route variables for a given request.
 func deleteVars(r *http.Request) {
 	mutex.Lock()
 	delete(vars, r)
