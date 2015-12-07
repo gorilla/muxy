@@ -4,64 +4,44 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sync"
+
+	"github.com/andviro/noodle"
+	"golang.org/x/net/context"
 )
+
+// contextKey is used to set and retrieve route variables from the context.
+type contextKey int
+
+// varsKey is the key used to set and retrieve route variables from the context.
+var varsKey = contextKey(0)
+
+// Vars returns the route variables from the given context.
+func Vars(c context.Context) map[string]string {
+	if v, ok := c.Value(varsKey).(map[string]string); ok {
+		return v
+	}
+	return nil
+}
+
+// -----------------------------------------------------------------------------
 
 // Matcher registers patterns as routes, matches requests and builds URLs.
 type Matcher interface {
 	Route(pattern string) (*Route, error)
-	Match(r *http.Request) (http.Handler, map[string]string)
+	Match(r *http.Request) (noodle.Handler, map[string]string)
 	URL(r *Route, values map[string]string) (*url.URL, error)
 }
 
 // -----------------------------------------------------------------------------
 
-// MatcherOption defines a custom matcher to be used by the router.
-// The returned value must be passed as an argument to New():
-//
-//     r := muxy.New(MatcherOption(CustomMatcher))
-//
-// It can only be used on New() and panics if the matcher was already set.
-func MatcherOption(m Matcher) func(*Router) {
-	return func(r *Router) {
-		if r.matcher != nil {
-			panic("muxy: matcher is already set")
-		}
-		r.matcher = m
-	}
-}
-
-// PanicHandlerOption defines the panic handler to be used by the router.
-// This handler is called if a panic occurs during ServeHTTP.
-// The returned value must be passed as an argument to New():
-//
-//     r := muxy.New(PanicHandlerOption(CustomHandler))
-func PanicHandlerOption(h func(http.ResponseWriter, *http.Request, interface{})) func(*Router) {
-	return func(r *Router) {
-		r.panicHandler = h
-	}
-}
-
-// -----------------------------------------------------------------------------
-
-// New creates a new Router.
-//
-// The optional options arguments can define a custom matcher and/or
-// panic handler to be used by the router:
-//
-//     r := muxy.New(MatcherOption(CustomMatcher), PanicHandlerOption(CustomHandler))
-func New(options ...func(*Router)) *Router {
+// New creates a new Router for the given matcher.
+func New(m Matcher) *Router {
 	r := &Router{
+		matcher:     m,
 		routes:      map[*Route]string{},
 		namedRoutes: map[string]*Route{},
 	}
 	r.router = r
-	for _, o := range options {
-		o(r)
-	}
-	if r.matcher == nil {
-		r.matcher = NewPathMatcher()
-	}
 	return r
 }
 
@@ -70,8 +50,6 @@ func New(options ...func(*Router)) *Router {
 type Router struct {
 	// matcher holds the Matcher implementation used by this router.
 	matcher Matcher
-	// panicHandler holds the handler used in case of panic during ServeHTTP.
-	panicHandler func(http.ResponseWriter, *http.Request, interface{})
 	// routes maps all routes to their correspondent patterns.
 	routes map[*Route]string
 	// namedRoutes maps route names to their correspondent routes.
@@ -144,17 +122,13 @@ func (r *Router) URL(name string, values map[string]string) *url.URL {
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	defer func() {
-		if r.panicHandler != nil {
-			if v := recover(); v != nil {
-				r.panicHandler(w, req, v)
-			}
-		}
-		deleteVars(req)
-	}()
+	r.ServeHTTPC(context.Background(), w, req)
+}
+
+// ServeHTTPC is a context aware version of ServeHTTP.
+func (r *Router) ServeHTTPC(c context.Context, w http.ResponseWriter, req *http.Request) {
 	if h, v := r.router.matcher.Match(req); h != nil {
-		setVars(req, v)
-		h.ServeHTTP(w, req)
+		_ = h(context.WithValue(c, varsKey, v), w, req)
 		return
 	}
 	http.NotFound(w, req)
@@ -172,7 +146,7 @@ type Route struct {
 	// name holds the route name.
 	name string
 	// Handlers maps request methods to the handlers that will handle them.
-	Handlers map[string]http.Handler
+	Handlers map[string]noodle.Handler
 }
 
 // Name defines the route name used for URL building.
@@ -186,9 +160,9 @@ func (r *Route) Name(name string) *Route {
 }
 
 // Handle sets the given handler to be served for the optional request methods.
-func (r *Route) Handle(h http.Handler, methods ...string) *Route {
+func (r *Route) Handle(h noodle.Handler, methods ...string) *Route {
 	if r.Handlers == nil {
-		r.Handlers = map[string]http.Handler{}
+		r.Handlers = map[string]noodle.Handler{}
 	}
 	if methods == nil {
 		r.Handlers[""] = h
@@ -200,82 +174,50 @@ func (r *Route) Handle(h http.Handler, methods ...string) *Route {
 	return r
 }
 
-// Below are convenience methods that map HTTP verbs to http.Handler, equivalent
-// to call r.Handle(http.HandlerFunc(h), "METHOD-NAME").
+// Below are convenience methods that map HTTP verbs to Handler, equivalent
+// to call r.Handle(noodle.Handler(h), "METHOD-NAME").
 
 // Connect sets the given handler to be served for the request method CONNECT.
-func (r *Route) Connect(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "CONNECT")
+func (r *Route) Connect(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "CONNECT")
 }
 
 // Delete sets the given handler to be served for the request method DELETE.
-func (r *Route) Delete(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "DELETE")
+func (r *Route) Delete(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "DELETE")
 }
 
 // Get sets the given handler to be served for the request method GET.
-func (r *Route) Get(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "GET")
+func (r *Route) Get(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "GET")
 }
 
 // Head sets the given handler to be served for the request method HEAD.
-func (r *Route) Head(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "HEAD")
+func (r *Route) Head(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "HEAD")
 }
 
 // Options sets the given handler to be served for the request method OPTIONS.
-func (r *Route) Options(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "OPTIONS")
+func (r *Route) Options(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "OPTIONS")
 }
 
 // PATCH sets the given handler to be served for the request method PATCH.
-func (r *Route) Patch(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "PATCH")
+func (r *Route) Patch(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "PATCH")
 }
 
 // POST sets the given handler to be served for the request method POST.
-func (r *Route) Post(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "POST")
+func (r *Route) Post(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "POST")
 }
 
 // Put sets the given handler to be served for the request method PUT.
-func (r *Route) Put(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "PUT")
+func (r *Route) Put(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "PUT")
 }
 
 // Trace sets the given handler to be served for the request method TRACE.
-func (r *Route) Trace(h func(http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(http.HandlerFunc(h), "TRACE")
-}
-
-// -----------------------------------------------------------------------------
-
-// Until net/context is part of the standard library, we'll use a map/lock
-// setup to store the route variables for a request. This is to avoid defining
-// our own handler signature, which would not be The Way To Go(tm).
-var (
-	mutex sync.RWMutex
-	vars  = map[*http.Request]map[string]string{}
-)
-
-// Vars returns the route variables stored for a given request.
-func Vars(r *http.Request) map[string]string {
-	mutex.RLock()
-	v := vars[r]
-	mutex.RUnlock()
-	return v
-}
-
-// setVars stores the route variables for a given request.
-func setVars(r *http.Request, v map[string]string) {
-	mutex.Lock()
-	vars[r] = v
-	mutex.Unlock()
-}
-
-// deleteVars deletes the route variables for a given request.
-func deleteVars(r *http.Request) {
-	mutex.Lock()
-	delete(vars, r)
-	mutex.Unlock()
+func (r *Route) Trace(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
+	return r.Handle(noodle.Handler(h), "TRACE")
 }

@@ -5,34 +5,42 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/andviro/noodle"
+	"github.com/gorilla/muxy"
+	"golang.org/x/net/context"
 )
 
-func NewPathMatcher() *PathMatcher {
+func New(options ...func(*pathMatcher)) *muxy.Router {
 	// TODO: options variadic argument (to set NotFound, strict slashes etc).
-	return &PathMatcher{}
+	m := &pathMatcher{}
+	for _, o := range options {
+		o(m)
+	}
+	return muxy.New(m)
 }
 
-type PathMatcher struct {
+type pathMatcher struct {
 	// TODO...
 }
 
-func (m *PathMatcher) Route(pattern string) (*Route, error) {
+func (m *pathMatcher) Route(pattern string) (*muxy.Route, error) {
 	// TODO...
 	return nil, nil
 }
 
-func (m *PathMatcher) Match(r *http.Request) (http.Handler, map[string]string) {
+func (m *pathMatcher) Match(r *http.Request) (noodle.Handler, map[string]string) {
 	// TODO...
 	return nil, nil
 }
 
-func (m *PathMatcher) URL(r *Route, values map[string]string) (*url.URL, error) {
+func (m *pathMatcher) URL(r *muxy.Route, values map[string]string) (*url.URL, error) {
 	// TODO...
 	return nil, nil
 }
 
 // methodHandler returns the handler registered for the given HTTP method.
-func methodHandler(handlers map[string]http.Handler, method string) http.Handler {
+func methodHandler(handlers map[string]noodle.Handler, method string) noodle.Handler {
 	if handlers == nil || len(handlers) == 0 {
 		return nil
 	}
@@ -57,7 +65,7 @@ func methodHandler(handlers map[string]http.Handler, method string) http.Handler
 
 // allowHandler returns a handler that sets a header with the given
 // status code and allowed methods.
-func allowHandler(handlers map[string]http.Handler, code int) http.Handler {
+func allowHandler(handlers map[string]noodle.Handler, code int) noodle.Handler {
 	allowed := make([]string, len(handlers)+1)
 	allowed[0] = "OPTIONS"
 	i := 1
@@ -67,10 +75,11 @@ func allowHandler(handlers map[string]http.Handler, code int) http.Handler {
 			i++
 		}
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return noodle.Handler(func(c context.Context, w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Allow", strings.Join(allowed[:i], ", "))
 		w.WriteHeader(code)
 		fmt.Fprintln(w, code, http.StatusText(code))
+		return nil
 	})
 }
