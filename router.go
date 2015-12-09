@@ -5,22 +5,25 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/andviro/noodle"
 	"golang.org/x/net/context"
 )
 
-// contextKey is used to set and retrieve route variables from the context.
-type contextKey int
+// Handler is a context-aware version of net/http.Handler.
+type Handler interface {
+	ServeHTTPC(context.Context, http.ResponseWriter, *http.Request)
+}
 
-// varsKey is the key used to set and retrieve route variables from the context.
-var varsKey = contextKey(0)
+// HandlerFunc is an adapter to allow the use of ordinary functions as Handler.
+type HandlerFunc func(context.Context, http.ResponseWriter, *http.Request)
 
-// Vars returns the route variables from the given context.
-func Vars(c context.Context) map[string]string {
-	if v, ok := c.Value(varsKey).(map[string]string); ok {
-		return v
-	}
-	return nil
+// ServeHTTP implements net/http.Handler. It calls h(context.TODO(), w, r).
+func (h HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h(context.TODO(), w, r)
+}
+
+// ServeHTTPC implements Handler. It calls h(c, w, r).
+func (h HandlerFunc) ServeHTTPC(c context.Context, w http.ResponseWriter, r *http.Request) {
+	h(c, w, r)
 }
 
 // -----------------------------------------------------------------------------
@@ -28,7 +31,7 @@ func Vars(c context.Context) map[string]string {
 // Matcher registers patterns as routes, matches requests and builds URLs.
 type Matcher interface {
 	Route(pattern string) (*Route, error)
-	Match(r *http.Request) (noodle.Handler, map[string]string)
+	Match(c context.Context, r *http.Request) (context.Context, Handler)
 	URL(r *Route, values map[string]string) (*url.URL, error)
 }
 
@@ -122,13 +125,15 @@ func (r *Router) URL(name string, values map[string]string) *url.URL {
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	r.ServeHTTPC(context.Background(), w, req)
+	r.ServeHTTPC(context.TODO(), w, req)
 }
 
-// ServeHTTPC is a context aware version of ServeHTTP.
+// ServeHTTPC is a context-aware version of ServeHTTP.
+//
+// It can be used by middleware to add extra context data before routing begins.
 func (r *Router) ServeHTTPC(c context.Context, w http.ResponseWriter, req *http.Request) {
-	if h, v := r.router.matcher.Match(req); h != nil {
-		_ = h(context.WithValue(c, varsKey, v), w, req)
+	if c, h := r.router.matcher.Match(c, req); h != nil {
+		h.ServeHTTPC(c, w, req)
 		return
 	}
 	http.NotFound(w, req)
@@ -146,7 +151,7 @@ type Route struct {
 	// name holds the route name.
 	name string
 	// Handlers maps request methods to the handlers that will handle them.
-	Handlers map[string]noodle.Handler
+	Handlers map[string]Handler
 }
 
 // Name defines the route name used for URL building.
@@ -160,9 +165,9 @@ func (r *Route) Name(name string) *Route {
 }
 
 // Handle sets the given handler to be served for the optional request methods.
-func (r *Route) Handle(h noodle.Handler, methods ...string) *Route {
+func (r *Route) Handle(h Handler, methods ...string) *Route {
 	if r.Handlers == nil {
-		r.Handlers = map[string]noodle.Handler{}
+		r.Handlers = make(map[string]Handler, len(methods))
 	}
 	if methods == nil {
 		r.Handlers[""] = h
@@ -175,49 +180,62 @@ func (r *Route) Handle(h noodle.Handler, methods ...string) *Route {
 }
 
 // Below are convenience methods that map HTTP verbs to Handler, equivalent
-// to call r.Handle(noodle.Handler(h), "METHOD-NAME").
+// to call r.Handle(muxy.HandlerFunc(f), "METHOD-NAME").
 
-// Connect sets the given handler to be served for the request method CONNECT.
-func (r *Route) Connect(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "CONNECT")
+// Connect sets the given function to be served for the request method CONNECT.
+func (r *Route) Connect(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "CONNECT")
 }
 
-// Delete sets the given handler to be served for the request method DELETE.
-func (r *Route) Delete(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "DELETE")
+// Delete sets the given function to be served for the request method DELETE.
+func (r *Route) Delete(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "DELETE")
 }
 
-// Get sets the given handler to be served for the request method GET.
-func (r *Route) Get(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "GET")
+// Get sets the given function to be served for the request method GET.
+func (r *Route) Get(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "GET")
 }
 
-// Head sets the given handler to be served for the request method HEAD.
-func (r *Route) Head(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "HEAD")
+// Head sets the given function to be served for the request method HEAD.
+func (r *Route) Head(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "HEAD")
 }
 
-// Options sets the given handler to be served for the request method OPTIONS.
-func (r *Route) Options(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "OPTIONS")
+// Options sets the given function to be served for the request method OPTIONS.
+func (r *Route) Options(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "OPTIONS")
 }
 
-// PATCH sets the given handler to be served for the request method PATCH.
-func (r *Route) Patch(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "PATCH")
+// PATCH sets the given function to be served for the request method PATCH.
+func (r *Route) Patch(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "PATCH")
 }
 
-// POST sets the given handler to be served for the request method POST.
-func (r *Route) Post(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "POST")
+// POST sets the given function to be served for the request method POST.
+func (r *Route) Post(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "POST")
 }
 
-// Put sets the given handler to be served for the request method PUT.
-func (r *Route) Put(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "PUT")
+// Put sets the given function to be served for the request method PUT.
+func (r *Route) Put(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "PUT")
 }
 
-// Trace sets the given handler to be served for the request method TRACE.
-func (r *Route) Trace(h func(context.Context, http.ResponseWriter, *http.Request) error) *Route {
-	return r.Handle(noodle.Handler(h), "TRACE")
+// Trace sets the given function to be served for the request method TRACE.
+func (r *Route) Trace(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
+	return r.Handle(HandlerFunc(f), "TRACE")
+}
+
+// -----------------------------------------------------------------------------
+
+// Variable is a type used to set and retrieve route variables from the context.
+type Variable string
+
+// Var returns the route variable with the given name from the context.
+//
+// The returned value may be empty if the variable was never set.
+func Var(c context.Context, name string) string {
+	s, _ := c.Value(Variable(name)).(string)
+	return s
 }

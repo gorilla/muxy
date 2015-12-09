@@ -1,1 +1,1 @@
-package muxy
+package muxy_test
