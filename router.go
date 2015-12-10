@@ -28,11 +28,15 @@ func (h HandlerFunc) ServeHTTPC(c context.Context, w http.ResponseWriter, r *htt
 
 // -----------------------------------------------------------------------------
 
-// Matcher registers patterns as routes, matches requests and builds URLs.
+// Matcher registers patterns as routes and matches requests.
 type Matcher interface {
+	// Route returns a Route for the given pattern.
 	Route(pattern string) (*Route, error)
+	// Match matches registered routes against the incoming request,
+	// sets URL variables in the context and returns a context and Handler.
 	Match(c context.Context, r *http.Request) (context.Context, Handler)
-	URL(r *Route, values map[string]string) (*url.URL, error)
+	// Build returns a URL for the given route and variables.
+	Build(r *Route, vars map[string]string) (*url.URL, error)
 }
 
 // -----------------------------------------------------------------------------
@@ -65,8 +69,17 @@ type Router struct {
 	name string
 }
 
-// Sub creates a subrouter for the given pattern prefix.
-func (r *Router) Sub(pattern string) *Router {
+// Group creates a group for the given pattern prefix. All routes registered in
+// the resulting router will prepend the prefix to its pattern. For example:
+//
+//     // Create a new router.
+//     r := muxy.New(matcher)
+//     // Create a group for the routes starting with the pattern "/admin".
+//     g := r.Group("/admin")
+//     // Register a route in the admin group, and add handlers for two HTTP
+//     // methods. These handlers will be served for the path "/admin/products".
+//     g.Route("/products").Get(listProducts).Post(updateProducts)
+func (r *Router) Group(pattern string) *Router {
 	return &Router{
 		router:  r.router,
 		pattern: r.pattern + pattern,
@@ -74,7 +87,8 @@ func (r *Router) Sub(pattern string) *Router {
 	}
 }
 
-// Name sets the name prefix used for new routes.
+// Name sets the name prefix used for new routes. All routes registered in
+// the resulting router will prepend the prefix to its name.
 func (r *Router) Name(name string) *Router {
 	r.name = r.name + name
 	return r
@@ -82,11 +96,16 @@ func (r *Router) Name(name string) *Router {
 
 // Mount imports all routes from the given router into this one.
 //
-// Combined with Sub() and Name(), it is possible to submount a router
-// defined in a different package using pattern and name prefixes:
+// Combined with Group() and Name(), it is possible to submount a router
+// defined in a different package using pattern and name prefixes.
+// For example:
 //
-//     r := muxy.New()
-//     s := r.Sub("/admin").Name("admin:").Mount(admin.Router)
+//     // Create a new router.
+//     r := muxy.New(matcher)
+//     // Create a group for the routes starting with the pattern "/admin",
+//     // set the name prefix as "admin:" and register all routes from the
+//     // external router.
+//     g := r.Group("/admin").Name("admin:").Mount(admin.Router)
 func (r *Router) Mount(router *Router) *Router {
 	for v, _ := range router.router.routes {
 		route := r.Route(v.pattern).Name(v.name)
@@ -112,9 +131,9 @@ func (r *Router) Route(pattern string) *Route {
 }
 
 // URL returns a URL for the given route name and variables.
-func (r *Router) URL(name string, values map[string]string) *url.URL {
+func (r *Router) URL(name string, vars map[string]string) *url.URL {
 	if route, ok := r.router.namedRoutes[name]; ok {
-		u, err := r.router.matcher.URL(route, values)
+		u, err := r.router.matcher.Build(route, vars)
 		if err != nil {
 			panic(err)
 		}
@@ -182,11 +201,6 @@ func (r *Route) Handle(h Handler, methods ...string) *Route {
 // Below are convenience methods that map HTTP verbs to Handler, equivalent
 // to call r.Handle(muxy.HandlerFunc(f), "METHOD-NAME").
 
-// Connect sets the given function to be served for the request method CONNECT.
-func (r *Route) Connect(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(HandlerFunc(f), "CONNECT")
-}
-
 // Delete sets the given function to be served for the request method DELETE.
 func (r *Route) Delete(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
 	return r.Handle(HandlerFunc(f), "DELETE")
@@ -220,11 +234,6 @@ func (r *Route) Post(f func(context.Context, http.ResponseWriter, *http.Request)
 // Put sets the given function to be served for the request method PUT.
 func (r *Route) Put(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
 	return r.Handle(HandlerFunc(f), "PUT")
-}
-
-// Trace sets the given function to be served for the request method TRACE.
-func (r *Route) Trace(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
-	return r.Handle(HandlerFunc(f), "TRACE")
 }
 
 // -----------------------------------------------------------------------------

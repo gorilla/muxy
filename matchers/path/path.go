@@ -33,7 +33,7 @@ func (m *matcher) Match(c context.Context, r *http.Request) (context.Context, mu
 	return nil, nil
 }
 
-func (m *matcher) URL(r *muxy.Route, values map[string]string) (*url.URL, error) {
+func (m *matcher) Build(r *muxy.Route, vars map[string]string) (*url.URL, error) {
 	// TODO...
 	return nil, nil
 }
