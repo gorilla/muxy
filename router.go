@@ -1,7 +1,6 @@
 package muxy
 
 import (
-	"fmt"
 	"net/http"
 	"net/url"
 
@@ -41,14 +40,27 @@ type Matcher interface {
 
 // -----------------------------------------------------------------------------
 
+// Variable is a type used to set and retrieve route variables from the context.
+type Variable string
+
+// Var returns the route variable with the given name from the context.
+//
+// The returned value may be empty if the variable wasn't set.
+func Var(c context.Context, name string) string {
+	v, _ := c.Value(Variable(name)).(string)
+	return v
+}
+
+// -----------------------------------------------------------------------------
+
 // New creates a new Router for the given matcher.
 func New(m Matcher) *Router {
 	r := &Router{
 		matcher:     m,
-		routes:      map[*Route]string{},
-		namedRoutes: map[string]*Route{},
+		Routes:      map[*Route]string{},
+		NamedRoutes: map[string]*Route{},
 	}
-	r.router = r
+	r.Router = r
 	return r
 }
 
@@ -57,16 +69,24 @@ func New(m Matcher) *Router {
 type Router struct {
 	// matcher holds the Matcher implementation used by this router.
 	matcher Matcher
-	// routes maps all routes to their correspondent patterns.
-	routes map[*Route]string
-	// namedRoutes maps route names to their correspondent routes.
-	namedRoutes map[string]*Route
-	// router holds the main router referenced by subrouters.
-	router *Router
-	// pattern holds the pattern prefix used to create new routes.
-	pattern string
-	// name holds the name prefix used to create new routes.
-	name string
+	// Router holds the main router referenced by subrouters.
+	Router *Router
+	// Pattern holds the pattern prefix used to create new routes.
+	Pattern string
+	// Noun holds the name prefix used to create new routes.
+	Noun string
+	// Middleware holds the middleware to apply in new routes.
+	Middleware []func(Handler) Handler
+	// Routes maps all routes to their correspondent patterns.
+	Routes map[*Route]string
+	// NamedRoutes maps route names to their correspondent routes.
+	NamedRoutes map[string]*Route
+}
+
+// Use appends the given middleware to this router.
+func (r *Router) Use(middleware ...func(Handler) Handler) *Router {
+	r.Middleware = append(r.Middleware, middleware...)
+	return r
 }
 
 // Group creates a group for the given pattern prefix. All routes registered in
@@ -74,23 +94,24 @@ type Router struct {
 //
 //     // Create a new router.
 //     r := muxy.New(matcher)
-//     // Create a group for the routes starting with the pattern "/admin".
+//     // Create a group for the routes that share pattern prefix "/admin".
 //     g := r.Group("/admin")
 //     // Register a route in the admin group, and add handlers for two HTTP
 //     // methods. These handlers will be served for the path "/admin/products".
 //     g.Route("/products").Get(listProducts).Post(updateProducts)
 func (r *Router) Group(pattern string) *Router {
 	return &Router{
-		router:  r.router,
-		pattern: r.pattern + pattern,
-		name:    r.name,
+		Router:     r.Router,
+		Pattern:    r.Pattern + pattern,
+		Noun:       r.Noun,
+		Middleware: r.Middleware,
 	}
 }
 
 // Name sets the name prefix used for new routes. All routes registered in
 // the resulting router will prepend the prefix to its name.
 func (r *Router) Name(name string) *Router {
-	r.name = r.name + name
+	r.Noun = r.Noun + name
 	return r
 }
 
@@ -106,10 +127,10 @@ func (r *Router) Name(name string) *Router {
 //     // set the name prefix as "admin:" and register all routes from the
 //     // external router.
 //     g := r.Group("/admin").Name("admin:").Mount(admin.Router)
-func (r *Router) Mount(router *Router) *Router {
-	for v, _ := range router.router.routes {
-		route := r.Route(v.pattern).Name(v.name)
-		for method, handler := range v.Handlers {
+func (r *Router) Mount(src *Router) *Router {
+	for k, _ := range src.Routes {
+		route := r.Route(k.Pattern).Name(k.Noun)
+		for method, handler := range k.Handlers {
 			route.Handle(handler, method)
 		}
 	}
@@ -118,22 +139,21 @@ func (r *Router) Mount(router *Router) *Router {
 
 // Route creates a new Route for the given pattern.
 func (r *Router) Route(pattern string) *Route {
-	pattern = r.pattern + pattern
-	route, err := r.router.matcher.Route(pattern)
+	route, err := r.Router.matcher.Route(r.Pattern + pattern)
 	if err != nil {
 		panic(err)
 	}
-	route.router = r.router
-	route.pattern = pattern
-	route.name = r.name
-	r.router.routes[route] = pattern
+	route.Router = r
+	route.Pattern = r.Pattern + pattern
+	route.Noun = r.Noun
+	r.Router.Routes[route] = r.Pattern + pattern
 	return route
 }
 
 // URL returns a URL for the given route name and variables.
 func (r *Router) URL(name string, vars map[string]string) *url.URL {
-	if route, ok := r.router.namedRoutes[name]; ok {
-		u, err := r.router.matcher.Build(route, vars)
+	if route, ok := r.Router.NamedRoutes[name]; ok {
+		u, err := r.Router.matcher.Build(route, vars)
 		if err != nil {
 			panic(err)
 		}
@@ -151,7 +171,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 //
 // It can be used by middleware to add extra context data before routing begins.
 func (r *Router) ServeHTTPC(c context.Context, w http.ResponseWriter, req *http.Request) {
-	if c, h := r.router.matcher.Match(c, req); h != nil {
+	if c, h := r.Router.matcher.Match(c, req); h != nil {
 		h.ServeHTTPC(c, w, req)
 		return
 	}
@@ -163,28 +183,31 @@ func (r *Router) ServeHTTPC(c context.Context, w http.ResponseWriter, req *http.
 // Route stores a URL pattern to be matched and the handler to be served
 // in case of a match, optionally mapping HTTP methods to different handlers.
 type Route struct {
-	// router holds the router that registered this route.
-	router *Router
-	// pattern holds the route pattern.
-	pattern string
-	// name holds the route name.
-	name string
+	// Router holds the router that registered this route.
+	Router *Router
+	// Pattern holds the route pattern.
+	Pattern string
+	// Noun holds the route name.
+	Noun string
 	// Handlers maps request methods to the handlers that will handle them.
 	Handlers map[string]Handler
 }
 
 // Name defines the route name used for URL building.
 func (r *Route) Name(name string) *Route {
-	r.name = r.name + name
-	if _, ok := r.router.namedRoutes[r.name]; ok {
-		panic(fmt.Sprintf("muxy: duplicated name %q", r.name))
+	r.Noun = r.Noun + name
+	if _, ok := r.Router.Router.NamedRoutes[r.Noun]; ok {
+		panic("muxy: duplicated name: " + r.Noun)
 	}
-	r.router.namedRoutes[r.name] = r
+	r.Router.Router.NamedRoutes[r.Noun] = r
 	return r
 }
 
 // Handle sets the given handler to be served for the optional request methods.
 func (r *Route) Handle(h Handler, methods ...string) *Route {
+	for i := len(r.Router.Middleware) - 1; i >= 0; i-- {
+		h = r.Router.Middleware[i](h)
+	}
 	if r.Handlers == nil {
 		r.Handlers = make(map[string]Handler, len(methods))
 	}
@@ -234,17 +257,4 @@ func (r *Route) Post(f func(context.Context, http.ResponseWriter, *http.Request)
 // Put sets the given function to be served for the request method PUT.
 func (r *Route) Put(f func(context.Context, http.ResponseWriter, *http.Request)) *Route {
 	return r.Handle(HandlerFunc(f), "PUT")
-}
-
-// -----------------------------------------------------------------------------
-
-// Variable is a type used to set and retrieve route variables from the context.
-type Variable string
-
-// Var returns the route variable with the given name from the context.
-//
-// The returned value may be empty if the variable was never set.
-func Var(c context.Context, name string) string {
-	s, _ := c.Value(Variable(name)).(string)
-	return s
 }
