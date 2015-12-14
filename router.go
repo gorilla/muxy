@@ -204,81 +204,76 @@ func (r *Route) Name(name string) *Route {
 }
 
 // Handle sets the given handler to be served for the optional request methods.
-//
-// h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
-func (r *Route) Handle(h interface{}, methods ...string) *Route {
-	hh := toHandler(h)
+func (r *Route) Handle(h Handler, methods ...string) *Route {
 	for i := len(r.Router.Middleware) - 1; i >= 0; i-- {
-		hh = r.Router.Middleware[i](hh)
+		h = r.Router.Middleware[i](h)
 	}
 	if r.Handlers == nil {
 		r.Handlers = make(map[string]Handler, len(methods))
 	}
 	if methods == nil {
-		r.Handlers[""] = hh
+		r.Handlers[""] = h
 	} else {
 		for _, m := range methods {
-			r.Handlers[m] = hh
+			r.Handlers[m] = h
 		}
 	}
 	return r
 }
 
 // Below are convenience methods that map HTTP verbs to Handler, equivalent
-// to call r.Handle(handler, "METHOD-NAME").
+// to call r.Handle(h, "METHOD-NAME").
 
 // Delete sets the given handler to be served for the request method DELETE.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Delete(h interface{}) *Route {
-	return r.Handle(h, "DELETE")
+	return r.Handle(toHandler(h), "DELETE")
 }
 
 // Get sets the given handler to be served for the request method GET.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Get(h interface{}) *Route {
-	return r.Handle(h, "GET")
+	return r.Handle(toHandler(h), "GET")
 }
 
 // Head sets the given handler to be served for the request method HEAD.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Head(h interface{}) *Route {
-	return r.Handle(h, "HEAD")
+	return r.Handle(toHandler(h), "HEAD")
 }
 
 // Options sets the given handler to be served for the request method OPTIONS.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Options(h interface{}) *Route {
-	return r.Handle(h, "OPTIONS")
+	return r.Handle(toHandler(h), "OPTIONS")
 }
 
 // PATCH sets the given handler to be served for the request method PATCH.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Patch(h interface{}) *Route {
-	return r.Handle(h, "PATCH")
+	return r.Handle(toHandler(h), "PATCH")
 }
 
 // POST sets the given handler to be served for the request method POST.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Post(h interface{}) *Route {
-	return r.Handle(h, "POST")
+	return r.Handle(toHandler(h), "POST")
 }
 
 // Put sets the given handler to be served for the request method PUT.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Put(h interface{}) *Route {
-	return r.Handle(h, "PUT")
+	return r.Handle(toHandler(h), "PUT")
 }
 
-// -----------------------------------------------------------------------------
-
-// toHandler ensures that the value passed to Route.Handle() is a Handler.
+// toHandler converts the argument passed to convenience methods to a Handler.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func toHandler(h interface{}) Handler {
