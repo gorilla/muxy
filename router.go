@@ -2,7 +2,6 @@ package muxy
 
 import (
 	"net/http"
-	"net/url"
 
 	"golang.org/x/net/context"
 )
@@ -34,8 +33,8 @@ type Matcher interface {
 	// Match matches registered routes against the incoming request,
 	// sets URL variables in the context and returns a context and Handler.
 	Match(c context.Context, r *http.Request) (context.Context, Handler)
-	// Build returns a URL for the given route and variables.
-	Build(r *Route, vars map[string]string) (*url.URL, error)
+	// Build returns a URL string for the given route and variables.
+	Build(r *Route, vars ...string) (string, error)
 }
 
 // -----------------------------------------------------------------------------
@@ -151,7 +150,7 @@ func (r *Router) Route(pattern string) *Route {
 }
 
 // URL returns a URL for the given route name and variables.
-func (r *Router) URL(name string, vars map[string]string) *url.URL {
+func (r *Router) URL(name string, vars ...string) string {
 	if route, ok := r.Router.NamedRoutes[name]; ok {
 		u, err := r.Router.matcher.Build(route, vars)
 		if err != nil {
@@ -159,7 +158,7 @@ func (r *Router) URL(name string, vars map[string]string) *url.URL {
 		}
 		return u
 	}
-	return nil
+	return ""
 }
 
 // ServeHTTP dispatches to the handler whose pattern matches the request.
@@ -169,7 +168,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // ServeHTTPC is a context-aware version of ServeHTTP.
 //
-// It can be used by middleware to add extra context data before routing begins.
+// It can be used to add extra context data before routing begins.
 func (r *Router) ServeHTTPC(c context.Context, w http.ResponseWriter, req *http.Request) {
 	if c, h := r.Router.matcher.Match(c, req); h != nil {
 		h.ServeHTTPC(c, w, req)
