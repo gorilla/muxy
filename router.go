@@ -152,7 +152,7 @@ func (r *Router) Route(pattern string) *Route {
 // URL returns a URL for the given route name and variables.
 func (r *Router) URL(name string, vars ...string) string {
 	if route, ok := r.Router.NamedRoutes[name]; ok {
-		u, err := r.Router.matcher.Build(route, vars)
+		u, err := r.Router.matcher.Build(route, vars...)
 		if err != nil {
 			panic(err)
 		}

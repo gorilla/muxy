@@ -1,9 +1,8 @@
-package muxy
+package mpath
 
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/gorilla/muxy"
@@ -11,7 +10,6 @@ import (
 )
 
 func New(options ...func(*matcher)) *muxy.Router {
-	// TODO: options variadic argument (to set NotFound, strict slashes etc).
 	m := &matcher{}
 	for _, o := range options {
 		o(m)
@@ -33,10 +31,12 @@ func (m *matcher) Match(c context.Context, r *http.Request) (context.Context, mu
 	return nil, nil
 }
 
-func (m *matcher) Build(r *muxy.Route, vars map[string]string) (*url.URL, error) {
+func (m *matcher) Build(r *muxy.Route, vars ...string) (string, error) {
 	// TODO...
-	return nil, nil
+	return "", nil
 }
+
+// -----------------------------------------------------------------------------
 
 // methodHandler returns the handler registered for the given HTTP method.
 func methodHandler(handlers map[string]muxy.Handler, method string) muxy.Handler {
@@ -80,4 +80,61 @@ func allowHandler(handlers map[string]muxy.Handler, code int) muxy.Handler {
 		w.WriteHeader(code)
 		fmt.Fprintln(w, code, http.StatusText(code))
 	})
+}
+
+// -----------------------------------------------------------------------------
+
+// setVars sets the route variables in the context.
+//
+// Since the path matched already, we can make some assumptions: the path
+// starts with a slash and there are no empty or dotted path segments.
+//
+// For the values:
+//
+//     path := "/foo/bar/var1/baz/var2/x/y/z"
+//     parts := []string{"/foo/bar/", ":v1", "/baz/", ":v2", "*"}
+//     keys := []muxy.Variable{"v1", "v2", "*"}
+//
+// The variables will be:
+//
+//     vars = []string{"var1", "var2", "x/y/z"}
+func setVars(c context.Context, path string, parts []string, keys []muxy.Variable) context.Context {
+	path, idx := path[1:], 0
+	vars := make([]string, len(keys))
+	for _, part := range parts {
+		switch part[0] {
+		case '/':
+			path = path[len(part)-1:]
+		case '*':
+			vars[idx] = path
+			break
+		default:
+			if i := strings.IndexByte(path, '/'); i < 0 {
+				vars[idx] = path
+				break
+			} else {
+				vars[idx] = path[:i]
+				path = path[i+1:]
+				idx++
+			}
+		}
+	}
+	return &varsCtx{c, keys, vars}
+}
+
+// varsCtx carries a key-variables mapping. It implements Context.Value() and
+// delegates all other calls to the embedded Context.
+type varsCtx struct {
+	context.Context
+	keys []muxy.Variable
+	vars []string
+}
+
+func (c *varsCtx) Value(key interface{}) interface{} {
+	for k, v := range c.keys {
+		if v == key {
+			return c.vars[k]
+		}
+	}
+	return c.Context.Value(key)
 }
