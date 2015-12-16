@@ -10,16 +10,9 @@ import (
 	"golang.org/x/net/context"
 )
 
-type route struct {
-	parts []string
-	keys  []muxy.Variable
-}
-
-// -----------------------------------------------------------------------------
-
 func New(options ...func(*matcher)) *muxy.Router {
 	m := &matcher{
-		routes: map[*muxy.Route]route{},
+		patterns: map[*muxy.Route]pattern{},
 	}
 	for _, o := range options {
 		o(m)
@@ -29,7 +22,7 @@ func New(options ...func(*matcher)) *muxy.Router {
 
 type matcher struct {
 	// TODO...
-	routes map[*muxy.Route]route
+	patterns map[*muxy.Route]pattern
 }
 
 func (m *matcher) Route(pattern string) (*muxy.Route, error) {
@@ -43,31 +36,10 @@ func (m *matcher) Match(c context.Context, r *http.Request) (context.Context, mu
 }
 
 func (m *matcher) Build(r *muxy.Route, vars ...string) (string, error) {
-	route, ok := m.routes[r]
-	if !ok {
-		return "", fmt.Errorf("muxy: route not found: %v", r)
+	if p, ok := m.patterns[r]; ok {
+		return p.build(vars...)
 	}
-	size := len(vars)
-	if size%2 != 0 {
-		return "", fmt.Errorf("muxy: expected even variadic arguments, got %v: %v", len(vars), vars)
-	}
-	b, count := new(bytes.Buffer), 0
-	for _, part := range route.parts {
-		if part[0] == '/' {
-			b.WriteString(part)
-			continue
-		}
-		for i := 0; i < size; i += 2 {
-			if vars[i] == part {
-				b.WriteString(vars[i+1])
-				count++
-			}
-		}
-	}
-	if size/2 != count {
-		return "", fmt.Errorf("muxy: unexpected variadic arguments: %v", vars)
-	}
-	return b.String(), nil
+	return "", fmt.Errorf("muxy: route not found: %v", r)
 }
 
 // -----------------------------------------------------------------------------
@@ -118,6 +90,11 @@ func allowHandler(handlers map[string]muxy.Handler, code int) muxy.Handler {
 
 // -----------------------------------------------------------------------------
 
+type pattern struct {
+	parts []string
+	keys  []muxy.Variable
+}
+
 // setVars sets the route variables in the context.
 //
 // Since the path matched already, we can make some assumptions: the path
@@ -125,17 +102,19 @@ func allowHandler(handlers map[string]muxy.Handler, code int) muxy.Handler {
 //
 // For the values:
 //
+//     p := pattern{
+//         parts: []string{"/foo/bar/", "v1", "/baz/", "v2", "*"},
+//         keys:  []muxy.Variable{"v1", "v2", "*"},
+//     }
 //     path := "/foo/bar/var1/baz/var2/x/y/z"
-//     parts := []string{"/foo/bar/", "v1", "/baz/", "v2", "*"}
-//     keys := []muxy.Variable{"v1", "v2", "*"}
 //
 // The variables will be:
 //
 //     vars = []string{"var1", "var2", "x/y/z"}
-func setVars(c context.Context, path string, parts []string, keys []muxy.Variable) context.Context {
+func (p pattern) setVars(c context.Context, path string) context.Context {
 	path, idx := path[1:], 0
-	vars := make([]string, len(keys))
-	for _, part := range parts {
+	vars := make([]string, len(p.keys))
+	for _, part := range p.parts {
 		switch part[0] {
 		case '/':
 			path = path[len(part)-1:]
@@ -153,8 +132,29 @@ func setVars(c context.Context, path string, parts []string, keys []muxy.Variabl
 			}
 		}
 	}
-	return &varsCtx{c, keys, vars}
+	return &varsCtx{c, p.keys, vars}
 }
+
+func (p pattern) build(vars ...string) (string, error) {
+	if len(p.keys)*2 != len(vars) {
+		return "", fmt.Errorf("muxy: expected %d arguments, got %d: %v", len(p.keys)*2, len(vars), vars)
+	}
+	b := new(bytes.Buffer)
+	for _, part := range p.parts {
+		if part[0] == '/' {
+			b.WriteString(part)
+			continue
+		}
+		for i, s := 0, len(vars); i < s; i += 2 {
+			if vars[i] == part {
+				b.WriteString(vars[i+1])
+			}
+		}
+	}
+	return b.String(), nil
+}
+
+// -----------------------------------------------------------------------------
 
 // varsCtx carries a key-variables mapping. It implements Context.Value() and
 // delegates all other calls to the embedded Context.
