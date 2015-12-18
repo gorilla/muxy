@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"path"
 	"strings"
+	"unicode"
 
 	"github.com/gorilla/muxy"
 	"golang.org/x/net/context"
@@ -12,7 +14,8 @@ import (
 
 func New(options ...func(*matcher)) *muxy.Router {
 	m := &matcher{
-		patterns: map[*muxy.Route]pattern{},
+		root:     &node{edges: map[string]*node{}},
+		patterns: map[*muxy.Route]*pattern{},
 	}
 	for _, o := range options {
 		o(m)
@@ -22,7 +25,8 @@ func New(options ...func(*matcher)) *muxy.Router {
 
 type matcher struct {
 	// TODO...
-	patterns map[*muxy.Route]pattern
+	root     *node
+	patterns map[*muxy.Route]*pattern
 }
 
 func (m *matcher) Route(pattern string) (*muxy.Route, error) {
@@ -90,6 +94,63 @@ func allowHandler(handlers map[string]muxy.Handler, code int) muxy.Handler {
 
 // -----------------------------------------------------------------------------
 
+type node struct {
+	edges map[string]*node // static edges, if any
+	vEdge *node            // variable edge, if any
+	wEdge *node            // wildcard edge, if any
+	leaf  *muxy.Route      // leaf value, if any
+}
+
+func (n *node) match(path string) *node {
+	part, path := "", path[1:]
+	for len(path) > 0 {
+		if i := strings.IndexByte(path, '/'); i < 0 {
+			part, path = path, ""
+		} else {
+			part, path = path[:i], path[i+1:]
+		}
+		if e, ok := n.edges[part]; ok {
+			n = e
+			continue
+		}
+		if e := n.vEdge; e != nil {
+			n = e
+			continue
+		}
+		return n.wEdge
+	}
+	return n
+}
+
+// -----------------------------------------------------------------------------
+
+// newPattern returns a pattern for the given path segments.
+func newPattern(segs []string) *pattern {
+	p := pattern{}
+	b := new(bytes.Buffer)
+	for _, s := range segs {
+		switch s[0] {
+		case ':':
+			s = s[1:]
+		case '*':
+		default:
+			b.WriteByte('/')
+			b.WriteString(s)
+			s = ""
+		}
+		if s != "" {
+			p.parts = append(p.parts, b.String()+"/")
+			b.Reset()
+			p.parts = append(p.parts, s)
+			p.keys = append(p.keys, muxy.Variable(s))
+		}
+	}
+	if b.Len() != 0 {
+		p.parts = append(p.parts, b.String())
+	}
+	return &p
+}
+
 type pattern struct {
 	parts []string
 	keys  []muxy.Variable
@@ -111,7 +172,7 @@ type pattern struct {
 // The variables will be:
 //
 //     vars = []string{"var1", "var2", "x/y/z"}
-func (p pattern) setVars(c context.Context, path string) context.Context {
+func (p *pattern) setVars(c context.Context, path string) context.Context {
 	path, idx := path[1:], 0
 	vars := make([]string, len(p.keys))
 	for _, part := range p.parts {
@@ -135,11 +196,12 @@ func (p pattern) setVars(c context.Context, path string) context.Context {
 	return &varsCtx{c, p.keys, vars}
 }
 
-func (p pattern) build(vars ...string) (string, error) {
+func (p *pattern) build(vars ...string) (string, error) {
 	if len(p.keys)*2 != len(vars) {
 		return "", fmt.Errorf("muxy: expected %d arguments, got %d: %v", len(p.keys)*2, len(vars), vars)
 	}
 	b := new(bytes.Buffer)
+Loop:
 	for _, part := range p.parts {
 		if part[0] == '/' {
 			b.WriteString(part)
@@ -148,8 +210,11 @@ func (p pattern) build(vars ...string) (string, error) {
 		for i, s := 0, len(vars); i < s; i += 2 {
 			if vars[i] == part {
 				b.WriteString(vars[i+1])
+				vars[i] = ""
+				continue Loop
 			}
 		}
+		return "", fmt.Errorf("muxy: missing argument for variable %q", part)
 	}
 	return b.String(), nil
 }
@@ -171,4 +236,70 @@ func (c *varsCtx) Value(key interface{}) interface{} {
 		}
 	}
 	return c.Context.Value(key)
+}
+
+// -----------------------------------------------------------------------------
+
+func parse(pattern string) ([]string, error) {
+	pattern = cleanPath(pattern)
+	count := 0
+	for _, r := range pattern {
+		if r == '/' {
+			count++
+		}
+	}
+	segs := make([]string, count)
+	idx := 0
+	part, path := "", pattern[1:]
+	for len(path) > 0 {
+		if i := strings.IndexByte(path, '/'); i < 0 {
+			part, path = path, ""
+		} else {
+			part, path = path[:i], path[i+1:]
+		}
+		switch part[0] {
+		case ':':
+			if len(part) == 1 {
+				return nil, fmt.Errorf("empty variable name")
+			}
+			for k, r := range part[1:] {
+				if k == 0 {
+					if r != '_' && !unicode.IsLetter(r) {
+						return nil, fmt.Errorf("expected underscore or letter starting a variable name; got %q", r)
+					}
+				} else if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+					return nil, fmt.Errorf("unexpected %q in variable name", r)
+				}
+			}
+		case '*':
+			if len(part) != 1 {
+				return nil, fmt.Errorf("unexpected wildcard: %q", part)
+			}
+			if len(path) != 0 {
+				return nil, fmt.Errorf("wildcard must be at the end of a pattern; got: .../*/%v", path)
+			}
+		}
+		segs[idx] = part
+		idx++
+	}
+	return segs, nil
+}
+
+// Return the canonical path for p, eliminating . and .. elements.
+//
+// Borrowed from net/http.
+func cleanPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	if p[0] != '/' {
+		p = "/" + p
+	}
+	np := path.Clean(p)
+	// path.Clean removes trailing slash except for root;
+	// put the trailing slash back if necessary.
+	if p[len(p)-1] == '/' && np != "/" {
+		np += "/"
+	}
+	return np
 }
