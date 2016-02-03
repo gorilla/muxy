@@ -12,10 +12,17 @@ import (
 	"golang.org/x/net/context"
 )
 
+func NotFoundHandler(h muxy.Handler) func(*matcher) {
+	return func(m *matcher) {
+		m.notFoundHandler = h
+	}
+}
+
 func New(options ...func(*matcher)) *muxy.Router {
 	m := &matcher{
-		root:     &node{edges: map[string]*node{}},
-		patterns: map[*muxy.Route]*pattern{},
+		root:            &node{edges: map[string]*node{}},
+		patterns:        map[*muxy.Route]*pattern{},
+		notFoundHandler: muxy.HandlerFunc(notFound),
 	}
 	for _, o := range options {
 		o(m)
@@ -24,19 +31,39 @@ func New(options ...func(*matcher)) *muxy.Router {
 }
 
 type matcher struct {
-	// TODO...
-	root     *node
-	patterns map[*muxy.Route]*pattern
+	root            *node
+	patterns        map[*muxy.Route]*pattern
+	notFoundHandler muxy.Handler
 }
 
 func (m *matcher) Route(pattern string) (*muxy.Route, error) {
-	// TODO...
-	return nil, nil
+	segs, err := parse(pattern)
+	if err != nil {
+		return nil, err
+	}
+	e := m.root.edge(segs)
+	if r := e.leaf; r != nil {
+		return nil, fmt.Errorf("muxy: a route for the pattern %q or equivalent already exists: %q", pattern, r.Pattern)
+	}
+	e.leaf = &muxy.Route{}
+	m.patterns[e.leaf] = newPattern(segs)
+	return e.leaf, nil
 }
 
 func (m *matcher) Match(c context.Context, r *http.Request) (context.Context, muxy.Handler) {
-	// TODO...
-	return nil, nil
+	var h muxy.Handler
+	// TODO: use a backward-compatible alternative to URL.RawPath here.
+	path := cleanPath(r.URL.Path)
+	e := m.root.match(path)
+	if e != nil && e.leaf != nil {
+		h = methodHandler(e.leaf.Handlers, r.Method)
+	}
+	if h == nil {
+		h = m.notFoundHandler
+	} else {
+		c = m.patterns[e.leaf].setVars(c, path)
+	}
+	return c, h
 }
 
 func (m *matcher) Build(r *muxy.Route, vars ...string) (string, error) {
@@ -99,6 +126,30 @@ type node struct {
 	vEdge *node            // variable edge, if any
 	wEdge *node            // wildcard edge, if any
 	leaf  *muxy.Route      // leaf value, if any
+}
+
+// edge returns the edge for the given path segments, creating it if needed.
+func (n *node) edge(segs []string) *node {
+	for _, seg := range segs {
+		switch seg[0] {
+		case ':':
+			if n.vEdge == nil {
+				n.vEdge = &node{edges: map[string]*node{}}
+			}
+			n = n.vEdge
+		case '*':
+			if n.wEdge == nil {
+				n.wEdge = &node{}
+			}
+			return n.wEdge
+		default:
+			if n.edges[seg] == nil {
+				n.edges[seg] = &node{edges: map[string]*node{}}
+			}
+			n = n.edges[seg]
+		}
+	}
+	return n
 }
 
 func (n *node) match(path string) *node {
@@ -173,6 +224,9 @@ type pattern struct {
 //
 //     vars = []string{"var1", "var2", "x/y/z"}
 func (p *pattern) setVars(c context.Context, path string) context.Context {
+	if len(p.keys) == 0 {
+		return c
+	}
 	path, idx := path[1:], 0
 	vars := make([]string, len(p.keys))
 	for _, part := range p.parts {
@@ -217,25 +271,6 @@ Loop:
 		return "", fmt.Errorf("muxy: missing argument for variable %q", part)
 	}
 	return b.String(), nil
-}
-
-// -----------------------------------------------------------------------------
-
-// varsCtx carries a key-variables mapping. It implements Context.Value() and
-// delegates all other calls to the embedded Context.
-type varsCtx struct {
-	context.Context
-	keys []muxy.Variable
-	vars []string
-}
-
-func (c *varsCtx) Value(key interface{}) interface{} {
-	for k, v := range c.keys {
-		if v == key {
-			return c.vars[k]
-		}
-	}
-	return c.Context.Value(key)
 }
 
 // -----------------------------------------------------------------------------
@@ -285,7 +320,7 @@ func parse(pattern string) ([]string, error) {
 	return segs, nil
 }
 
-// Return the canonical path for p, eliminating . and .. elements.
+// cleanPath returns the canonical path for p, eliminating . and .. elements.
 //
 // Borrowed from net/http.
 func cleanPath(p string) string {
@@ -302,4 +337,30 @@ func cleanPath(p string) string {
 		np += "/"
 	}
 	return np
+}
+
+// -----------------------------------------------------------------------------
+
+// varsCtx carries a key-variables mapping. It implements Context.Value() and
+// delegates all other calls to the embedded Context.
+type varsCtx struct {
+	context.Context
+	keys []muxy.Variable
+	vars []string
+}
+
+func (c *varsCtx) Value(key interface{}) interface{} {
+	for k, v := range c.keys {
+		if v == key {
+			return c.vars[k]
+		}
+	}
+	return c.Context.Value(key)
+}
+
+// -----------------------------------------------------------------------------
+
+// notFound replies to the request with an HTTP 404 not found error.
+func notFound(c context.Context, w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "404 page not found", http.StatusNotFound)
 }

@@ -251,14 +251,14 @@ func (r *Route) Options(h interface{}) *Route {
 	return r.Handle(toHandler(h), "OPTIONS")
 }
 
-// PATCH sets the given handler to be served for the request method PATCH.
+// Patch sets the given handler to be served for the request method PATCH.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Patch(h interface{}) *Route {
 	return r.Handle(toHandler(h), "PATCH")
 }
 
-// POST sets the given handler to be served for the request method POST.
+// Post sets the given handler to be served for the request method POST.
 //
 // h must be Handler or func(context.Context, http.ResponseWriter, *http.Request).
 func (r *Route) Post(h interface{}) *Route {
