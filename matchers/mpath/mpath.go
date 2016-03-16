@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/gorilla/muxy"
+	//"github.com/gorilla/muxy/encoder"
 	"golang.org/x/net/context"
 )
 
@@ -287,7 +288,8 @@ func parse(pattern string) ([]string, error) {
 	idx := 0
 	part, path := "", pattern[1:]
 	for len(path) > 0 {
-		if i := strings.IndexByte(path, '/'); i < 0 {
+		i := strings.IndexByte(path, '/')
+		if i < 0 {
 			part, path = path, ""
 		} else {
 			part, path = path[:i], path[i+1:]
@@ -310,7 +312,7 @@ func parse(pattern string) ([]string, error) {
 			if len(part) != 1 {
 				return nil, fmt.Errorf("unexpected wildcard: %q", part)
 			}
-			if len(path) != 0 {
+			if i >= 0 {
 				return nil, fmt.Errorf("wildcard must be at the end of a pattern; got: .../*/%v", path)
 			}
 		}
